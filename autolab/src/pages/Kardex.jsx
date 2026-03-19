@@ -1,71 +1,124 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { REGIONES } from '../lib/inventario'
+import { REGIONES, ORIGEN_CFG } from '../lib/inventario'
 
 const TIPO_CFG = {
   entrada: { icon:'▲', color:'#3B6D11' },
   salida:  { icon:'▼', color:'#A32D2D' },
   ajuste:  { icon:'●', color:'#0C447C' },
 }
+const ths = { padding:'7px 10px', fontWeight:500, fontSize:11, color:'#666', borderBottom:'0.5px solid #e0dfd8', background:'#f5f5f3', whiteSpace:'nowrap' }
+const tds = { padding:'7px 10px', borderBottom:'0.5px solid #f0efe8', fontSize:12, verticalAlign:'middle' }
+const inp = { width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }
+const lbl = { fontSize:11, color:'#666', display:'block', marginBottom:3 }
 
 export default function Kardex() {
   const { perfil } = useAuth()
-  const [movs,    setMovs]    = useState([])
-  const [talleres,setTalleres]= useState([])
-  const [skus,    setSkus]    = useState([])
-  const [loading, setLoading] = useState(true)
-  const [modal,   setModal]   = useState(false)
-  const [saving,  setSaving]  = useState(false)
-  const [form,    setForm]    = useState({ taller_id:'', sku_id:'', tipo:'salida', cantidad:'', notas:'' })
+  const isAdmin   = perfil?.rol === 'admin'
+  const isVisor   = perfil?.rol === 'visor'
+  const canWrite  = ['admin','staff'].includes(perfil?.rol)
+
+  const [movs,       setMovs]       = useState([])
+  const [talleres,   setTalleres]   = useState([])
+  const [skus,       setSkus]       = useState([])
+  const [proveedores,setProveedores]= useState([])
+  const [loading,    setLoading]    = useState(true)
+  const [modal,      setModal]      = useState(false)
+  const [saving,     setSaving]     = useState(false)
+  const [editUUID,   setEditUUID]   = useState(null)
+  const [confirmDel, setConfirmDel] = useState(null)
+
+  const initForm = { taller_id:'', sku_id:'', tipo:'salida', cantidad:'', origen:'compra', notas:'',
+    proveedor_id:'', precio_unitario:'', uuid_factura:'', taller_origen_id:'',
+    marca:'', placa:'', es_garantia:false }
+  const [form, setForm] = useState(initForm)
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const [{ data: m }, { data: t }, { data: s }] = await Promise.all([
+    const [{ data:m },{ data:t },{ data:s },{ data:p }] = await Promise.all([
       supabase.from('movimientos')
-        .select('*, talleres(nombre, region), skus(codigo), perfiles(nombre)')
-        .order('created_at', { ascending: false })
-        .limit(200),
-      supabase.from('talleres').select('*').eq('activo', true).order('nombre'),
-      supabase.from('skus').select('*').eq('activo', true).order('codigo'),
+        .select('*, talleres(nombre,region), skus(codigo), perfiles(nombre), proveedores(nombre), taller_origen:taller_origen_id(nombre)')
+        .order('created_at', { ascending:false }).limit(300),
+      supabase.from('talleres').select('*').eq('activo',true).order('nombre'),
+      supabase.from('skus').select('*').eq('activo',true).order('codigo'),
+      supabase.from('proveedores').select('*').eq('activo',true).order('nombre'),
     ])
-    setMovs(m ?? [])
-    setTalleres(t ?? [])
-    setSkus(s ?? [])
+    setMovs(m??[]); setTalleres(t??[]); setSkus(s??[]); setProveedores(p??[])
     setLoading(false)
   }
 
-  async function handleGuardar() {
-    if (!form.taller_id || !form.sku_id || !form.cantidad) return alert('Completa todos los campos')
-    setSaving(true)
-    const { error } = await supabase.from('movimientos').insert({
-      taller_id: form.taller_id, sku_id: form.sku_id,
-      tipo: form.tipo, cantidad: parseInt(form.cantidad),
-      notas: form.notas, usuario_id: perfil?.id,
-      fecha: new Date().toISOString().split('T')[0],
-    })
-    if (error) { alert('Error: ' + error.message); setSaving(false); return }
-    setModal(false)
-    setForm({ taller_id:'', sku_id:'', tipo:'salida', cantidad:'', notas:'' })
-    load()
-    setSaving(false)
+  function totalCalc() {
+    return (parseFloat(form.precio_unitario)||0) * (parseInt(form.cantidad)||0)
   }
 
-  if (loading) return <div className="p-6 text-sm text-gray-400">Cargando...</div>
+  async function handleGuardar() {
+    if (!form.taller_id || !form.sku_id || !form.cantidad) return alert('Completa taller, SKU y cantidad')
+    if (form.tipo === 'entrada' && form.origen === 'compra' && !form.proveedor_id) return alert('Selecciona el proveedor')
+    if (form.tipo === 'entrada' && form.origen === 'compra' && !form.precio_unitario) return alert('Ingresa el precio unitario con IVA')
+    if (form.tipo === 'salida' && !form.es_garantia && !form.placa.trim()) return alert('La placa es obligatoria para salidas normales')
+
+    setSaving(true)
+    const payload = {
+      taller_id:  form.taller_id,
+      sku_id:     form.sku_id,
+      tipo:       form.tipo,
+      cantidad:   parseInt(form.cantidad),
+      notas:      form.notas || null,
+      usuario_id: perfil?.id,
+      fecha:      new Date().toISOString().split('T')[0],
+      // Entrada
+      origen:     form.tipo === 'entrada' ? form.origen : null,
+      marca:      form.tipo === 'entrada' && form.marca.trim() ? form.marca.trim() : null,
+      ...(form.tipo === 'entrada' && form.origen === 'compra' && {
+        proveedor_id:    form.proveedor_id || null,
+        precio_unitario: parseFloat(form.precio_unitario) || null,
+        precio_total:    totalCalc() || null,
+        uuid_factura:    form.uuid_factura.trim() || null,
+      }),
+      ...(form.tipo === 'entrada' && form.origen === 'movimiento' && {
+        taller_origen_id: form.taller_origen_id || null,
+      }),
+      // Salida
+      placa:       form.tipo === 'salida' && !form.es_garantia ? form.placa.trim().toUpperCase() : null,
+      es_garantia: form.tipo === 'salida' ? form.es_garantia : false,
+    }
+
+    const { error } = await supabase.from('movimientos').insert(payload)
+    if (error) { alert('Error: ' + error.message); setSaving(false); return }
+    setModal(false); setForm(initForm); load(); setSaving(false)
+  }
+
+  async function handleDelete(id) {
+    await supabase.from('movimientos').delete().eq('id', id)
+    setConfirmDel(null); load()
+  }
+
+  async function handleSaveUUID() {
+    if (!editUUID) return
+    await supabase.from('movimientos').update({ uuid_factura: editUUID.uuid }).eq('id', editUUID.id)
+    setEditUUID(null); load()
+  }
+
+  if (loading) return <div style={{ padding:20, color:'#aaa' }}>Cargando...</div>
 
   return (
-    <div style={{ padding:20, maxWidth:1000 }}>
-      <div className="flex items-start justify-between mb-4">
+    <div style={{ padding:20, maxWidth:1200 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
         <div>
           <h1 style={{ fontSize:17, fontWeight:500 }}>Kardex de movimientos</h1>
           <p style={{ fontSize:11, color:'#888', marginTop:2 }}>Entradas, salidas y ajustes de inventario</p>
         </div>
-        <button onClick={() => setModal(true)}
-          style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:8,
-            padding:'6px 14px', fontSize:12, cursor:'pointer', fontWeight:500 }}>
-          + Nuevo movimiento
-        </button>
+        {canWrite && (
+          <button onClick={() => setModal(true)}
+            style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:8, padding:'6px 14px', fontSize:12, cursor:'pointer', fontWeight:500 }}>
+            + Nuevo movimiento
+          </button>
+        )}
+        {isVisor && (
+          <span style={{ fontSize:11, color:'#3B6D11', background:'#EAF3DE', padding:'5px 12px', borderRadius:8 }}>👁 Solo lectura</span>
+        )}
       </div>
 
       <div style={{ background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden' }}>
@@ -73,30 +126,89 @@ export default function Kardex() {
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
             <thead>
               <tr>
-                {['Fecha','Tipo','Taller','Ciudad','SKU','Cantidad','Registró'].map(h => (
-                  <th key={h} style={{ padding:'7px 12px', textAlign:'left', fontWeight:500,
-                    fontSize:11, color:'#666', borderBottom:'0.5px solid #e0dfd8',
-                    background:'#f5f5f3', whiteSpace:'nowrap' }}>{h}</th>
-                ))}
+                {['Fecha','Tipo','Origen','Taller','Ciudad','SKU','Qty','Marca','Placa / Garantía','Proveedor','P. Unit.','Total','UUID Factura','Registró', ...(isAdmin?['']:[])]
+                  .map(h => <th key={h} style={ths}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
               {movs.map(m => {
-                const tc = TIPO_CFG[m.tipo] ?? TIPO_CFG.ajuste
-                const rc = REGIONES[m.talleres?.region] ?? {}
+                const tc  = TIPO_CFG[m.tipo] ?? TIPO_CFG.ajuste
+                const rc  = REGIONES[m.talleres?.region] ?? {}
+                const oc  = ORIGEN_CFG[m.origen] ?? null
+                const sinUUID = m.tipo==='entrada' && m.origen==='compra' && !m.uuid_factura
                 return (
-                  <tr key={m.id} style={{ borderBottom:'0.5px solid #f0efe8' }}>
-                    <td style={{ padding:'7px 12px', color:'#888', fontSize:11 }}>{m.fecha}</td>
-                    <td style={{ padding:'7px 12px', fontWeight:500, color:tc.color }}>
-                      {tc.icon} {m.tipo}
+                  <tr key={m.id}>
+                    <td style={tds}>{m.fecha}</td>
+                    <td style={tds}><span style={{ color:tc.color, fontWeight:500 }}>{tc.icon} {m.tipo}</span></td>
+                    <td style={tds}>
+                      {oc
+                        ? <span style={{ fontSize:10, padding:'1px 6px', borderRadius:20, background:oc.bg, color:oc.color, fontWeight:500 }}>{oc.label}</span>
+                        : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
-                    <td style={{ padding:'7px 12px', fontWeight:500 }}>{m.talleres?.nombre}</td>
-                    <td style={{ padding:'7px 12px', fontSize:10, fontWeight:500, color:rc.color }}>{rc.label}</td>
-                    <td style={{ padding:'7px 12px', fontFamily:'monospace', fontSize:11 }}>{m.skus?.codigo}</td>
-                    <td style={{ padding:'7px 12px', fontWeight:500, color:tc.color, textAlign:'right' }}>
-                      {m.tipo === 'entrada' ? '+' : '-'}{m.cantidad}
+                    <td style={{ ...tds, fontWeight:500 }}>
+                      {m.talleres?.nombre}
+                      {m.origen==='movimiento' && m.taller_origen?.nombre && (
+                        <div style={{ fontSize:10, color:'#888' }}>desde: {m.taller_origen.nombre}</div>
+                      )}
                     </td>
-                    <td style={{ padding:'7px 12px', color:'#aaa', fontSize:11 }}>{m.perfiles?.nombre}</td>
+                    <td style={{ ...tds, fontSize:10, fontWeight:500, color:rc.color }}>{rc.label}</td>
+                    <td style={{ ...tds, fontFamily:'monospace', fontSize:11 }}>{m.skus?.codigo}</td>
+                    <td style={{ ...tds, fontWeight:500, color:tc.color, textAlign:'right' }}>
+                      {m.tipo==='entrada'?'+':m.tipo==='salida'?'-':''}{m.cantidad}
+                    </td>
+                    {/* Marca */}
+                    <td style={{ ...tds, fontSize:11, color:'#555' }}>
+                      {m.marca || <span style={{ color:'#ccc' }}>—</span>}
+                    </td>
+                    {/* Placa / Garantía */}
+                    <td style={tds}>
+                      {m.tipo === 'salida'
+                        ? m.es_garantia
+                          ? <span style={{ fontSize:10, padding:'2px 8px', borderRadius:20, background:'#FAEEDA', color:'#633806', fontWeight:500 }}>⚠ Garantía</span>
+                          : m.placa
+                            ? <span style={{ fontFamily:'monospace', fontSize:11, fontWeight:500, background:'#f5f5f3', padding:'2px 6px', borderRadius:5 }}>{m.placa}</span>
+                            : <span style={{ color:'#ccc' }}>—</span>
+                        : <span style={{ color:'#ccc' }}>—</span>}
+                    </td>
+                    <td style={tds}>{m.proveedores?.nombre ?? <span style={{ color:'#ccc' }}>—</span>}</td>
+                    <td style={{ ...tds, textAlign:'right' }}>
+                      {m.precio_unitario ? `$${Number(m.precio_unitario).toLocaleString('es-MX')}` : <span style={{ color:'#ccc' }}>—</span>}
+                    </td>
+                    <td style={{ ...tds, textAlign:'right' }}>
+                      {m.precio_total ? `$${Number(m.precio_total).toLocaleString('es-MX')}` : <span style={{ color:'#ccc' }}>—</span>}
+                    </td>
+                    <td style={tds}>
+                      {sinUUID ? (
+                        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                          <span style={{ background:'#FCEBEB', color:'#791F1F', fontSize:10, padding:'2px 7px', borderRadius:20, fontWeight:500 }}>⚠ Falta UUID</span>
+                          {isAdmin && (
+                            <button onClick={() => setEditUUID({ id:m.id, uuid:'' })}
+                              style={{ fontSize:10, padding:'2px 8px', border:'0.5px solid #ccc', borderRadius:6, cursor:'pointer', background:'white' }}>
+                              Agregar
+                            </button>
+                          )}
+                        </div>
+                      ) : m.uuid_factura ? (
+                        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                          <span style={{ fontFamily:'monospace', fontSize:10, color:'#444' }}>{m.uuid_factura.slice(0,12)}...</span>
+                          {isAdmin && (
+                            <button onClick={() => setEditUUID({ id:m.id, uuid:m.uuid_factura })}
+                              style={{ fontSize:10, padding:'2px 7px', border:'0.5px solid #ccc', borderRadius:6, cursor:'pointer', background:'white' }}>
+                              Editar
+                            </button>
+                          )}
+                        </div>
+                      ) : <span style={{ color:'#ccc' }}>—</span>}
+                    </td>
+                    <td style={{ ...tds, color:'#aaa', fontSize:11 }}>{m.perfiles?.nombre}</td>
+                    {isAdmin && (
+                      <td style={tds}>
+                        <button onClick={() => setConfirmDel(m)}
+                          style={{ background:'#FCEBEB', color:'#A32D2D', border:'none', borderRadius:6, padding:'3px 9px', fontSize:11, cursor:'pointer' }}>
+                          Eliminar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -105,65 +217,203 @@ export default function Kardex() {
         </div>
       </div>
 
-      {/* Modal */}
-      {modal && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)',
-          display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
-          <div style={{ background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:420 }}>
-            <div className="flex justify-between items-center mb-4">
+      {/* ── Modal nuevo movimiento ── */}
+      {modal && canWrite && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
+          <div style={{ background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:500, maxHeight:'92vh', overflowY:'auto' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
               <p style={{ fontWeight:500 }}>Nuevo movimiento</p>
-              <button onClick={() => setModal(false)}
-                style={{ background:'none', border:'0.5px solid #ccc', borderRadius:7,
-                  padding:'3px 10px', cursor:'pointer', fontSize:12 }}>✕</button>
+              <button onClick={() => { setModal(false); setForm(initForm) }}
+                style={{ background:'none', border:'0.5px solid #ccc', borderRadius:7, padding:'3px 10px', cursor:'pointer' }}>✕</button>
             </div>
-            <div className="grid grid-cols-2 gap-3 mb-3">
+
+            {/* Tipo */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
+              {['entrada','salida','ajuste'].map(t => (
+                <button key={t} onClick={() => setForm(f => ({ ...f, tipo:t, es_garantia:false }))}
+                  style={{ padding:'8px', borderRadius:8, border:`1.5px solid ${form.tipo===t?'#1a4f8a':'#e0dfd8'}`,
+                    background:form.tipo===t?'#E6F1FB':'white', color:form.tipo===t?'#0C447C':'#666',
+                    fontWeight:form.tipo===t?500:400, cursor:'pointer', fontSize:12, textTransform:'capitalize' }}>
+                  {t==='entrada'?'▲ Entrada':t==='salida'?'▼ Salida':'● Ajuste'}
+                </button>
+              ))}
+            </div>
+
+            {/* ── ENTRADA ── */}
+            {form.tipo === 'entrada' && (
+              <>
+                {/* Origen */}
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:11, color:'#666', marginBottom:5 }}>Origen de la entrada *</div>
+                  <div style={{ display:'flex', gap:6 }}>
+                    {[['compra','Compra'],['movimiento','Movimiento entre talleres'],['garantia','Garantía']].map(([k,l]) => (
+                      <button key={k} onClick={() => setForm(f=>({...f,origen:k}))}
+                        style={{ padding:'5px 10px', borderRadius:20, fontSize:11, cursor:'pointer', fontWeight:500,
+                          border:`1.5px solid ${form.origen===k?'#1a4f8a':'#e0dfd8'}`,
+                          background:form.origen===k?'#E6F1FB':'white',
+                          color:form.origen===k?'#0C447C':'#666' }}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Marca */}
+                <div style={{ marginBottom:10 }}>
+                  <label style={lbl}>Marca <span style={{ color:'#aaa', fontSize:10 }}>(opcional — informativo)</span></label>
+                  <input style={inp} value={form.marca} onChange={e=>setForm(f=>({...f,marca:e.target.value}))}
+                    placeholder="ej. Bridgestone, Optima, Yuasa..." />
+                </div>
+              </>
+            )}
+
+            {/* ── SALIDA ── */}
+            {form.tipo === 'salida' && (
+              <div style={{ marginBottom:12 }}>
+                {/* Toggle garantía */}
+                <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', marginBottom:10, padding:'8px 12px',
+                  background:form.es_garantia?'#FAEEDA':'#f9f9f7', borderRadius:8, border:`1px solid ${form.es_garantia?'#FAC775':'#e0dfd8'}` }}>
+                  <input type="checkbox" checked={form.es_garantia} onChange={e=>setForm(f=>({...f,es_garantia:e.target.checked,placa:''}))} />
+                  <div>
+                    <span style={{ fontWeight:500, fontSize:12, color:form.es_garantia?'#633806':'#444' }}>
+                      Salida de garantía
+                    </span>
+                    <div style={{ fontSize:10, color:'#888', marginTop:1 }}>
+                      {form.es_garantia
+                        ? 'El proveedor recoge la pieza defectuosa — no requiere placa'
+                        : 'Marca esta opción si el proveedor está recogiendo una garantía'}
+                    </div>
+                  </div>
+                </label>
+
+                {/* Placa — solo si NO es garantía */}
+                {!form.es_garantia && (
+                  <div>
+                    <label style={lbl}>Placa del vehículo *</label>
+                    <input style={{ ...inp, textTransform:'uppercase' }}
+                      value={form.placa} onChange={e=>setForm(f=>({...f,placa:e.target.value.toUpperCase()}))}
+                      placeholder="ej. ABC-123-D" />
+                    <p style={{ fontSize:10, color:'#888', marginTop:3 }}>Campo obligatorio para salidas normales</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Taller + SKU */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
               <div>
-                <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>Taller *</label>
-                <select value={form.taller_id} onChange={e => setForm({...form, taller_id:e.target.value})}
-                  style={{ width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }}>
+                <label style={lbl}>Taller destino *</label>
+                <select style={inp} value={form.taller_id} onChange={e=>setForm(f=>({...f,taller_id:e.target.value}))}>
                   <option value="">Seleccionar...</option>
-                  {talleres.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                  {talleres.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
                 </select>
               </div>
               <div>
-                <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>SKU *</label>
-                <select value={form.sku_id} onChange={e => setForm({...form, sku_id:e.target.value})}
-                  style={{ width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }}>
+                <label style={lbl}>SKU *</label>
+                <select style={inp} value={form.sku_id} onChange={e=>setForm(f=>({...f,sku_id:e.target.value}))}>
                   <option value="">Seleccionar...</option>
-                  {skus.map(s => <option key={s.id} value={s.id}>{s.codigo}</option>)}
+                  {skus.map(s=><option key={s.id} value={s.id}>{s.codigo}</option>)}
                 </select>
               </div>
-              <div>
-                <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>Tipo *</label>
-                <select value={form.tipo} onChange={e => setForm({...form, tipo:e.target.value})}
-                  style={{ width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }}>
-                  <option value="salida">Salida</option>
-                  <option value="entrada">Entrada</option>
-                  <option value="ajuste">Ajuste (stock exacto)</option>
+            </div>
+
+            <div style={{ marginBottom:10 }}>
+              <label style={lbl}>Cantidad *</label>
+              <input type="number" min="1" style={inp} value={form.cantidad} onChange={e=>setForm(f=>({...f,cantidad:e.target.value}))} />
+            </div>
+
+            {/* Taller origen (movimiento) */}
+            {form.tipo==='entrada' && form.origen==='movimiento' && (
+              <div style={{ marginBottom:10 }}>
+                <label style={lbl}>Taller de origen</label>
+                <select style={inp} value={form.taller_origen_id} onChange={e=>setForm(f=>({...f,taller_origen_id:e.target.value}))}>
+                  <option value="">Seleccionar...</option>
+                  {talleres.filter(t=>t.id!==form.taller_id).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
                 </select>
               </div>
-              <div>
-                <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>Cantidad *</label>
-                <input type="number" min="1" value={form.cantidad}
-                  onChange={e => setForm({...form, cantidad:e.target.value})}
-                  style={{ width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }} />
+            )}
+
+            {/* Datos de compra */}
+            {form.tipo==='entrada' && form.origen==='compra' && (
+              <div style={{ background:'#f9f9f7', border:'0.5px solid #e0dfd8', borderRadius:9, padding:12, marginBottom:10 }}>
+                <p style={{ fontSize:11, fontWeight:500, marginBottom:10, color:'#444' }}>Datos de compra</p>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+                  <div>
+                    <label style={lbl}>Proveedor *</label>
+                    <select style={inp} value={form.proveedor_id} onChange={e=>setForm(f=>({...f,proveedor_id:e.target.value}))}>
+                      <option value="">Seleccionar...</option>
+                      {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={lbl}>Precio unitario c/IVA (MXN) *</label>
+                    <input type="number" min="0" step="0.01" style={inp} value={form.precio_unitario}
+                      onChange={e=>setForm(f=>({...f,precio_unitario:e.target.value}))} />
+                  </div>
+                </div>
+                {form.precio_unitario && form.cantidad && (
+                  <div style={{ background:'#EAF3DE', borderRadius:7, padding:'7px 10px', marginBottom:10, fontSize:12 }}>
+                    <span style={{ color:'#3B6D11', fontWeight:500 }}>Total calculado: ${totalCalc().toLocaleString('es-MX')} MXN</span>
+                    <span style={{ color:'#888', fontSize:10, marginLeft:8 }}>({form.cantidad} × ${parseFloat(form.precio_unitario||0).toLocaleString('es-MX')})</span>
+                  </div>
+                )}
+                <div>
+                  <label style={lbl}>UUID de factura <span style={{ color:'#aaa' }}>(opcional — se puede agregar después)</span></label>
+                  <input type="text" style={{ ...inp, fontFamily:'monospace', fontSize:11 }}
+                    value={form.uuid_factura} onChange={e=>setForm(f=>({...f,uuid_factura:e.target.value}))}
+                    placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" />
+                  {!form.uuid_factura && <p style={{ fontSize:10, color:'#E24B4A', marginTop:3 }}>⚠ Se marcará como pendiente hasta registrarlo</p>}
+                </div>
               </div>
+            )}
+
+            <div style={{ marginBottom:14 }}>
+              <label style={lbl}>Notas</label>
+              <input type="text" style={inp} value={form.notas} onChange={e=>setForm(f=>({...f,notas:e.target.value}))} />
             </div>
-            <div className="mb-3">
-              <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>Notas</label>
-              <input type="text" value={form.notas} onChange={e => setForm({...form, notas:e.target.value})}
-                style={{ width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }} />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setModal(false)}
-                style={{ padding:'6px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>
-                Cancelar
-              </button>
+
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+              <button onClick={() => { setModal(false); setForm(initForm) }}
+                style={{ padding:'6px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>Cancelar</button>
               <button onClick={handleGuardar} disabled={saving}
-                style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:7,
-                  padding:'6px 14px', fontSize:12, cursor:'pointer', opacity:saving?0.7:1 }}>
+                style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:7, padding:'6px 14px', fontSize:12, cursor:'pointer', opacity:saving?0.7:1 }}>
                 {saving ? 'Guardando...' : 'Guardar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar UUID */}
+      {editUUID && isAdmin && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
+          <div style={{ background:'white', borderRadius:12, padding:20, width:'100%', maxWidth:400 }}>
+            <p style={{ fontWeight:500, marginBottom:12 }}>Registrar UUID de factura</p>
+            <input type="text" value={editUUID.uuid} onChange={e=>setEditUUID(x=>({...x,uuid:e.target.value}))}
+              placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+              style={{ ...inp, fontFamily:'monospace', fontSize:11, marginBottom:12 }} />
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+              <button onClick={() => setEditUUID(null)} style={{ padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>Cancelar</button>
+              <button onClick={handleSaveUUID} style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:7, padding:'5px 13px', fontSize:12, cursor:'pointer' }}>Guardar UUID</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmar eliminación */}
+      {confirmDel && isAdmin && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
+          <div style={{ background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:360 }}>
+            <p style={{ fontWeight:500, marginBottom:8 }}>¿Eliminar este movimiento?</p>
+            <p style={{ fontSize:12, color:'#888', marginBottom:16 }}>
+              {confirmDel.tipo} · {confirmDel.skus?.codigo} · {confirmDel.talleres?.nombre} · {confirmDel.fecha}
+            </p>
+            <div style={{ background:'#FAEEDA', borderRadius:7, padding:'8px 10px', fontSize:11, color:'#633806', marginBottom:16 }}>
+              ⚠ Esta acción revertirá el stock automáticamente.
+            </div>
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+              <button onClick={() => setConfirmDel(null)} style={{ padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>Cancelar</button>
+              <button onClick={() => handleDelete(confirmDel.id)} style={{ background:'#E24B4A', color:'white', border:'none', borderRadius:7, padding:'5px 13px', fontSize:12, cursor:'pointer' }}>Sí, eliminar</button>
             </div>
           </div>
         </div>

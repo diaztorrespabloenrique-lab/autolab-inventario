@@ -6,12 +6,13 @@ const th = { padding:'6px 8px', fontWeight:500, fontSize:10, color:'#666', borde
 const td = { padding:'5px 7px', borderBottom:'0.5px solid #e0dfd8', border:'0.5px solid #e0dfd8', verticalAlign:'middle' }
 
 export default function Dashboard() {
-  const [talleres, setTalleres] = useState([])
-  const [skus,     setSkus]     = useState([])
-  const [inv,      setInv]      = useState([])
-  const [loading,  setLoading]  = useState(true)
+  const [talleres,     setTalleres]     = useState([])
+  const [skus,         setSkus]         = useState([])
+  const [inv,          setInv]          = useState([])
+  // Map de "tallerID|skuID" → cantidad neta en garantía
+  const [stockGarantia,setStockGarantia]= useState({})
+  const [loading,      setLoading]      = useState(true)
 
-  // Filtros
   const [fr,           setFr]           = useState('')
   const [fc,           setFc]           = useState('')
   const [ft,           setFt]           = useState('')
@@ -20,9 +21,6 @@ export default function Dashboard() {
   const [talleresSelec,setTalleresSelec]= useState([])
   const [showTFiltro,  setShowTFiltro]  = useState(false)
 
-  // Set de "taller_id|sku_id" que tienen al menos 1 entrada de garantía
-  const [garantiaPairs, setGarantiaPairs] = useState(new Set())
-
   useEffect(() => { load() }, [])
 
   async function load() {
@@ -30,14 +28,18 @@ export default function Dashboard() {
       supabase.from('talleres').select('*').eq('activo',true).order('region').order('nombre'),
       supabase.from('skus').select('*, tipos_refaccion(nombre)').eq('activo',true).order('codigo'),
       supabase.from('v_inventario').select('*'),
-      // Traer SOLO pares taller+sku que tienen entradas de garantía
-      supabase.from('movimientos').select('taller_id, sku_id').eq('origen','garantia').eq('tipo','entrada'),
+      // Stock neto de garantía por taller+sku
+      supabase.from('v_stock_garantia').select('*'),
     ])
     setTalleres(t ?? [])
     setSkus(s ?? [])
     setInv(i ?? [])
-    // Guardar como "tallerID|skuID" para lookup O(1)
-    setGarantiaPairs(new Set((g ?? []).map(r => `${r.taller_id}|${r.sku_id}`)))
+    // Construir mapa "tallerID|skuID" → cantidad garantía
+    const map = {}
+    ;(g ?? []).forEach(r => {
+      map[`${r.taller_id}|${r.sku_id}`] = Number(r.stock_garantia ?? 0)
+    })
+    setStockGarantia(map)
     setLoading(false)
   }
 
@@ -45,47 +47,58 @@ export default function Dashboard() {
     return inv.find(r => r.taller_id === taller_id && r.sku_id === sku_id)
   }
 
-  function isGarantia(taller_id, sku_id) {
-    return garantiaPairs.has(`${taller_id}|${sku_id}`)
+  // Retorna cuántas unidades son garantía para este taller+sku
+  function getStockGarantia(taller_id, sku_id) {
+    return stockGarantia[`${taller_id}|${sku_id}`] ?? 0
   }
 
-  // Filtros de taller
   const talleresFiltrados = talleres.filter(t => {
     if (fr && t.region !== fr) return false
     if (fc && t.cliente !== fc) return false
     if (talleresSelec.length > 0 && !talleresSelec.includes(t.id)) return false
     return true
   })
-
-  // Filtro tipo
   const skusFiltrados = skus.filter(s => {
     if (!ft) return true
     return (s.tipos_refaccion?.nombre ?? s.tipo) === ft
   })
-
-  // Filtro garantía: muestra solo celdas que son/no son garantía
-  // (no filtra SKUs sino celdas individuales dentro de la matriz)
   const regiones = [...new Set(talleresFiltrados.map(t => t.region))]
 
-  // KPI counts
   const counts = { critico:0, moderado:0, sobrestock:0, sin_rotacion:0 }
   inv.forEach(r => { if (r.cobertura && counts[r.cobertura] !== undefined) counts[r.cobertura]++ })
 
-  // Tipos únicos para el select
   const tipos = [...new Map(skus.map(s => {
-    const nombre = s.tipos_refaccion?.nombre ?? s.tipo
-    return [nombre, nombre]
+    const n = s.tipos_refaccion?.nombre ?? s.tipo
+    return [n, n]
   })).entries()]
 
   function toggleTaller(id) {
     setTalleresSelec(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
+  // Calcula el stock a mostrar según el filtro de garantía
+  function calcStockDisplay(cell, taller_id, sku_id) {
+    if (!cell) return null
+    const totalStock = cell.stock
+    const garStock   = getStockGarantia(taller_id, sku_id)
+    const normalStock = Math.max(0, totalStock - garStock)
+
+    if (fgarantia === 'garantia') {
+      if (garStock <= 0) return null // esta celda no tiene garantía → ocultar
+      return { stock: garStock, label: `${garStock} gar.` }
+    }
+    if (fgarantia === 'normal') {
+      if (normalStock <= 0 && garStock >= totalStock) return null // todo es garantía → ocultar
+      return { stock: normalStock, label: `${normalStock}` }
+    }
+    // Sin filtro — mostrar total con desglose si hay garantía
+    return { stock: totalStock, garStock: garStock > 0 ? garStock : 0 }
+  }
+
   if (loading) return <div style={{ padding:20, color:'#aaa', fontSize:13 }}>Cargando inventario...</div>
 
   return (
     <div style={{ padding:18, minWidth:700 }}>
-      {/* Header */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
         <div>
           <h1 style={{ fontSize:17, fontWeight:500 }}>Inventario</h1>
@@ -107,7 +120,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Barra de filtros */}
+      {/* Filtros */}
       <div style={{ background:'white', border:'0.5px solid #e0dfd8', borderRadius:10,
         padding:'10px 14px', marginBottom:12, display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end' }}>
 
@@ -141,7 +154,7 @@ export default function Dashboard() {
         <div>
           <div style={{ fontSize:10, color:'#888', fontWeight:500, marginBottom:3 }}>Origen</div>
           <select value={fgarantia} onChange={e => setFgarantia(e.target.value)}
-            style={{ padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:130 }}>
+            style={{ padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:140 }}>
             <option value="">Garantía y normal</option>
             <option value="garantia">Solo garantía</option>
             <option value="normal">Solo normal</option>
@@ -163,7 +176,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Selector de talleres individuales */}
         <div style={{ position:'relative' }}>
           <div style={{ fontSize:10, color:'#888', fontWeight:500, marginBottom:3 }}>Talleres</div>
           <button onClick={() => setShowTFiltro(p => !p)}
@@ -173,7 +185,7 @@ export default function Dashboard() {
               background: talleresSelec.length ? '#E6F1FB' : 'white',
               color: talleresSelec.length ? '#0C447C' : '#666',
               fontWeight: talleresSelec.length ? 500 : 400 }}>
-            {talleresSelec.length ? `${talleresSelec.length} seleccionados` : 'Todos los talleres'} ▾
+            {talleresSelec.length ? `${talleresSelec.length} seleccionados` : 'Todos'} ▾
           </button>
           {showTFiltro && (
             <div style={{ position:'absolute', top:'100%', left:0, zIndex:50, background:'white',
@@ -218,15 +230,18 @@ export default function Dashboard() {
           <span style={{ width:10, height:10, borderRadius:2, background:'#f5f5f3', border:'0.5px solid #ccc', display:'inline-block' }}/>
           Sin registro
         </span>
-        {fgarantia && (
-          <span style={{ background:'#FAEEDA', color:'#633806', padding:'2px 8px', borderRadius:20, fontWeight:500 }}>
-            Mostrando: {fgarantia === 'garantia' ? 'solo garantía (por taller)' : 'solo stock normal'}
+        {fgarantia === 'garantia' && (
+          <span style={{ marginLeft:'auto', background:'#FAEEDA', color:'#633806', padding:'2px 8px', borderRadius:20, fontWeight:500 }}>
+            Mostrando unidades en garantía por taller
+          </span>
+        )}
+        {fgarantia === 'normal' && (
+          <span style={{ marginLeft:'auto', background:'#EAF3DE', color:'#27500A', padding:'2px 8px', borderRadius:20, fontWeight:500 }}>
+            Mostrando solo unidades normales
           </span>
         )}
         {fcob && (
-          <span style={{ color:'#185FA5', fontWeight:500 }}>
-            Cobertura: {COB_CFG[fcob]?.label}
-          </span>
+          <span style={{ color:'#185FA5', fontWeight:500 }}>Cobertura: {COB_CFG[fcob]?.label}</span>
         )}
       </div>
 
@@ -242,13 +257,12 @@ export default function Dashboard() {
                 </th>
               ))}
             </tr>
-            {/* Fila de rotación promedio */}
             <tr>
               <th style={{ ...th, position:'sticky', left:0, zIndex:3, textAlign:'left', fontSize:9, color:'#bbb', background:'#fafafa' }}>
                 Rotación / sem →
               </th>
               {skusFiltrados.map(s => {
-                const rots = inv.filter(r => r.sku_id === s.id && r.rotacion > 0).map(r => r.rotacion)
+                const rots = inv.filter(r => r.sku_id===s.id && r.rotacion>0).map(r=>r.rotacion)
                 const avg = rots.length ? (rots.reduce((a,b)=>a+b,0)/rots.length) : 0
                 return (
                   <th key={s.id} style={{ ...th, textAlign:'center', fontSize:9, color:'#aaa', background:'#fafafa' }}>
@@ -284,23 +298,23 @@ export default function Dashboard() {
                         </span>
                       </td>
                       {skusFiltrados.map(s => {
-                        const cell = getCell(t.id, s.id)
-                        const esGarantia = isGarantia(t.id, s.id)
+                        const cell    = getCell(t.id, s.id)
+                        const display = calcStockDisplay(cell, t.id, s.id)
 
-                        // Aplicar filtro garantía — a nivel de celda individual
-                        if (fgarantia === 'garantia' && !esGarantia) {
-                          return <td key={s.id} style={{ ...td, textAlign:'center', color:'#e0dfd8', fontSize:10, width:76 }}>—</td>
-                        }
-                        if (fgarantia === 'normal' && esGarantia) {
-                          return <td key={s.id} style={{ ...td, textAlign:'center', color:'#e0dfd8', fontSize:10, width:76 }}>—</td>
+                        // Si el filtro de garantía excluye esta celda
+                        if ((fgarantia === 'garantia' || fgarantia === 'normal') && display === null) {
+                          return (
+                            <td key={s.id} style={{ ...td, textAlign:'center', color:'#e0e0e0', fontSize:9, width:76 }}>—</td>
+                          )
                         }
 
                         if (!cell) return (
                           <td key={s.id} style={{ ...td, textAlign:'center', color:'#ccc', fontSize:10, width:76 }}>—</td>
                         )
 
-                        const cob = cell.cobertura ?? 'sin_rotacion'
-                        const cfg2 = COB_CFG[cob] ?? COB_CFG.sin_rotacion
+                        const stockMostrar = display?.stock ?? cell.stock
+                        const cob   = cell.cobertura ?? 'sin_rotacion'
+                        const cfg2  = COB_CFG[cob] ?? COB_CFG.sin_rotacion
                         const dimmed = fcob && fcob !== cob
 
                         return (
@@ -309,7 +323,7 @@ export default function Dashboard() {
                             opacity: dimmed ? 0.13 : 1, transition:'opacity 0.2s' }}>
                             <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:1 }}>
                               <span style={{ fontWeight:500, fontSize:12, lineHeight:1, color: dimmed ? '#ccc' : cfg2.tc }}>
-                                {cell.stock}
+                                {stockMostrar}
                               </span>
                               <span style={{ fontSize:9, color: dimmed ? '#ccc' : cfg2.sc }}>
                                 {semLabel(cell.stock, cell.rotacion)}
@@ -317,11 +331,11 @@ export default function Dashboard() {
                               <span style={{ fontSize:8, color:'#bbb' }}>
                                 rot {Number(cell.rotacion ?? 0).toFixed(1)}
                               </span>
-                              {/* Indicador garantía — solo si esta celda específica tiene garantía */}
-                              {esGarantia && (
+                              {/* Desglose garantía solo cuando no hay filtro activo */}
+                              {!fgarantia && (display?.garStock ?? 0) > 0 && (
                                 <span style={{ fontSize:7, color:'#854F0B', background:'#FAEEDA',
                                   padding:'1px 4px', borderRadius:4, marginTop:1, fontWeight:500 }}>
-                                  gar.
+                                  {display.garStock} gar.
                                 </span>
                               )}
                             </div>

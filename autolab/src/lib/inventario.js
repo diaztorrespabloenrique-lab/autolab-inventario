@@ -18,11 +18,9 @@ export const ORIGEN_CFG = {
   compra:     { label: 'Compra',     bg: '#E6F1FB', color: '#0C447C' },
   movimiento: { label: 'Movimiento', bg: '#E1F5EE', color: '#085041' },
   garantia:   { label: 'Garantía',   bg: '#FAEEDA', color: '#633806' },
+  cascos:     { label: 'Cascos',     bg: '#F1EFE8', color: '#5F5E5A' },
 }
-// Roles que pueden escribir datos
 export const ROLES_ESCRITURA = ['admin', 'staff']
-export const ROLES_LECTURA   = ['admin', 'staff', 'visor']
-
 export function semLabel(cantidad, rotacion) {
   if (cantidad === 0 && (!rotacion || rotacion === 0)) return 'sin rot.'
   if (cantidad === 0) return 'sin stock'

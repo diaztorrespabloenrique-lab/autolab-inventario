@@ -1,302 +1,441 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
-import { REGIONES, CLIENTES, formatMXN } from '../lib/inventario'
+import { useAuth } from '../contexts/AuthContext'
+import { formatMXN, IVA } from '../lib/inventario'
+
+const btn = (color='#1a4f8a') => ({
+  background:color, color:'white', border:'none', borderRadius:7,
+  padding:'5px 13px', fontSize:11, cursor:'pointer', fontWeight:500
+})
+const inp = { padding:'6px 9px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, width:'100%' }
+const th  = { padding:'7px 10px', fontSize:11, fontWeight:500, color:'#666', background:'#f5f5f3', borderBottom:'0.5px solid #e0dfd8', whiteSpace:'nowrap' }
+const td  = { padding:'7px 10px', fontSize:12, borderBottom:'0.5px solid #f0efe8', verticalAlign:'middle' }
+
+const ESTADO_CFG = {
+  borrador:  { label:'Borrador',               bg:'#F1EFE8', color:'#5F5E5A' },
+  pendiente: { label:'Pendiente aprobación',   bg:'#FEF9C3', color:'#854D0E' },
+  aprobado:  { label:'Aprobado',               bg:'#DCFCE7', color:'#166534' },
+  enviado:   { label:'Enviado al proveedor',   bg:'#DBEAFE', color:'#1E40AF' },
+  cancelado: { label:'Cancelado',              bg:'#FEE2E2', color:'#991B1B' },
+}
 
 export default function Pedidos() {
-  const [inv,       setInv]       = useState([])
-  const [pedidos,   setPedidos]   = useState([])
-  const [talleres,  setTalleres]  = useState([])
-  const [skus,      setSkus]      = useState([])
-  const [proveedores,setProveedores]=useState([])
-  const [loading,   setLoading]   = useState(true)
-  const [saving,    setSaving]    = useState(false)
-  const [expandido, setExpandido] = useState(null)
-  const [modalFactura, setModalFactura] = useState(null) // pedido seleccionado
-  const [formFactura, setFormFactura] = useState({ url:'', valor:'', file:null })
+  const { perfil } = useAuth()
+  const isAdmin  = perfil?.rol === 'admin'
+  const canWrite = ['admin','staff'].includes(perfil?.rol)
+
+  const [pedidos,    setPedidos]    = useState([])
+  const [talleres,   setTalleres]   = useState([])
+  const [skus,       setSkus]       = useState([])
+  const [inv,        setInv]        = useState([])
+  const [loading,    setLoading]    = useState(true)
+
+  const [fTallerProp, setFTallerProp] = useState('')
+  const [fSkuProp,    setFSkuProp]    = useState('')
+
+  const [modalPedido, setModalPedido] = useState(false)
+  const [itemsPedido, setItemsPedido] = useState([])
+  const [saving,      setSaving]      = useState(false)
+
+  const [modalAprobar,  setModalAprobar]  = useState(null)
+  const [notasAprob,    setNotasAprob]    = useState('')
+  const [expandido,     setExpandido]     = useState(null)
+  const [modalFactura,  setModalFactura]  = useState(null)
+  const [uuidFact,      setUuidFact]      = useState('')
+  const [confirmDel,    setConfirmDel]    = useState(null)
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const [{ data:i },{ data:p },{ data:t },{ data:s },{ data:pv }] = await Promise.all([
-      supabase.from('v_inventario').select('*'),
-      supabase.from('pedidos').select('*, pedido_items(*, talleres(nombre,region,cliente), skus(codigo,precio)), proveedores(nombre)').order('created_at', { ascending:false }),
+    const [{ data:p }, { data:t }, { data:s }, { data:i }] = await Promise.all([
+      supabase.from('pedidos')
+        .select('*, talleres(nombre,region), proveedores(nombre), aprobador:aprobado_por(nombre)')
+        .order('created_at', { ascending:false }),
       supabase.from('talleres').select('*').eq('activo',true).order('nombre'),
-      supabase.from('skus').select('*').eq('activo',true).order('codigo'),
-      supabase.from('proveedores').select('*').eq('activo',true).order('nombre'),
+      supabase.from('skus').select('*, tipos_refaccion(nombre)').eq('activo',true).order('codigo'),
+      supabase.from('v_inventario').select('*'),
     ])
-    setInv(i ?? [])
-    setPedidos(p ?? [])
-    setTalleres(t ?? [])
-    setSkus(s ?? [])
-    setProveedores(pv ?? [])
+    setPedidos(p??[]); setTalleres(t??[]); setSkus(s??[]); setInv(i??[])
     setLoading(false)
   }
 
-  // Propuesta: solo SKUs con rotación > 0 y semanas < 2
-  const propuesta = inv
-    .filter(r => r.rotacion > 0 && r.semanas < 2)
-    .map(r => ({
-      ...r,
-      pedir: Math.ceil(r.rotacion * 2 - r.stock),
-      total: Math.ceil(r.rotacion * 2 - r.stock) * (r.precio ?? 0),
-    }))
-    .filter(r => r.pedir > 0)
-    .sort((a,b) => a.semanas - b.semanas)
+  function generarPropuesta() {
+    const items = []
+    inv.forEach(r => {
+      if (r.rotacion <= 0) return
+      const sem = r.stock / r.rotacion
+      if (sem >= 2) return
+      if (fTallerProp && r.taller_id !== fTallerProp) return
+      if (fSkuProp    && r.sku_id    !== fSkuProp)    return
+      const sku = skus.find(s => s.id === r.sku_id)
+      if (!sku) return
+      const cantPedir = Math.max(1, Math.round(r.rotacion * 4) - r.stock)
+      items.push({
+        taller_id:r.taller_id, taller_nom:r.taller,
+        sku_id:r.sku_id, sku_cod:r.sku,
+        cantidad:cantPedir, precio:sku.precio||0,
+        stock_actual:r.stock, rotacion:r.rotacion,
+        semanas:sem.toFixed(1),
+      })
+    })
+    return items
+  }
 
-  const totalPropuesta = propuesta.reduce((s,r) => s+r.total, 0)
+  function abrirModalPedido() {
+    const items = generarPropuesta()
+    if (!items.length) { alert('No hay SKUs críticos para los filtros aplicados'); return }
+    setItemsPedido(items)
+    setModalPedido(true)
+  }
 
-  async function confirmar() {
-    if (!propuesta.length) return
+  function updateItem(idx, val) {
+    setItemsPedido(prev => prev.map((it,i) =>
+      i===idx ? {...it, cantidad:Math.max(0, parseInt(val)||0)} : it
+    ))
+  }
+  function removeItem(idx) {
+    setItemsPedido(prev => prev.filter((_,i) => i!==idx))
+  }
+
+  async function confirmarPedido() {
+    const validos = itemsPedido.filter(it => it.cantidad > 0)
+    if (!validos.length) { alert('No hay ítems con cantidad > 0'); return }
     setSaving(true)
-    // Generar número de orden consecutivo
-    const { count } = await supabase.from('pedidos').select('*', { count:'exact', head:true })
-    const numOrden = 'OC-' + String((count ?? 0) + 1).padStart(4,'0')
+    const { data:ultimos } = await supabase.from('pedidos').select('numero_oc').order('created_at',{ascending:false}).limit(1)
+    const nextOC = ultimos?.[0]?.numero_oc ? ultimos[0].numero_oc + 1 : 1001
+    const total  = validos.reduce((s,it) => s + it.cantidad * it.precio, 0)
+    const { error } = await supabase.from('pedidos').insert({
+      numero_oc: nextOC,
+      taller_id: validos[0].taller_id,
+      items:     validos.map(it => ({ taller_id:it.taller_id, sku_id:it.sku_id, cantidad:it.cantidad, precio:it.precio })),
+      total, estado:'pendiente', created_by:perfil?.id,
+    })
+    if (error) alert('Error: ' + error.message)
+    else { setModalPedido(false); setItemsPedido([]); load() }
+    setSaving(false)
+  }
 
-    const semana = `Semana ${getWeek()} - ${new Date().toLocaleDateString('es-MX',{month:'long',year:'numeric'})}`
-    const { data:pedido, error } = await supabase.from('pedidos')
-      .insert({ semana, estado:'enviado', total_mxn:totalPropuesta, numero_orden:numOrden })
-      .select().single()
-    if (error) { alert('Error: '+error.message); setSaving(false); return }
+  async function aprobarPedido() {
+    const { error } = await supabase.from('pedidos').update({
+      estado:'aprobado', aprobado_por:perfil?.id,
+      fecha_aprobacion:new Date().toISOString(),
+      notas_aprobacion:notasAprob||null,
+    }).eq('id', modalAprobar.id)
+    if (error) alert('Error: ' + error.message)
+    else { setModalAprobar(null); setNotasAprob(''); load() }
+  }
 
-    const items = propuesta.map(r => ({
-      pedido_id:  pedido.id,
-      taller_id:  r.taller_id,
-      sku_id:     r.sku_id,
-      cantidad:   r.pedir,
-      precio_unit:r.precio ?? 0,
-    }))
-    await supabase.from('pedido_items').insert(items)
-    load(); setSaving(false)
+  async function rechazarPedido() {
+    await supabase.from('pedidos').update({ estado:'cancelado' }).eq('id', modalAprobar.id)
+    setModalAprobar(null); load()
+  }
+
+  async function marcarEnviado(id) {
+    await supabase.from('pedidos').update({ estado:'enviado' }).eq('id', id); load()
+  }
+
+  async function eliminarPedido(id) {
+    const { error } = await supabase.from('pedidos').delete().eq('id', id)
+    if (error) alert('Error al eliminar: ' + error.message)
+    setConfirmDel(null); load()
   }
 
   async function guardarFactura() {
-    if (!modalFactura) return
-    let url = formFactura.url
-    // Si hay archivo, subirlo a Storage
-    if (formFactura.file) {
-      const path = `facturas/${modalFactura.id}/${formFactura.file.name}`
-      const { data:up } = await supabase.storage.from('evidencias').upload(path, formFactura.file, { upsert:true })
-      if (up) {
-        const { data:{ publicUrl } } = supabase.storage.from('evidencias').getPublicUrl(path)
-        url = publicUrl
-      }
-    }
-    await supabase.from('pedidos').update({
-      factura_url:   url || null,
-      factura_valor: parseFloat(formFactura.valor) || null,
-      estado:        'recibido',
-    }).eq('id', modalFactura.id)
-    setModalFactura(null)
-    setFormFactura({ url:'', valor:'', file:null })
-    load()
+    await supabase.from('pedidos').update({ uuid_factura:uuidFact||null }).eq('id', modalFactura.id)
+    setModalFactura(null); setUuidFact(''); load()
   }
 
-  function getWeek() {
-    const d=new Date(); const s=new Date(d.getFullYear(),0,1)
-    return Math.ceil(((d-s)/86400000+s.getDay()+1)/7)
-  }
+  const propuesta  = generarPropuesta()
+  const totalProp  = propuesta.reduce((s,it) => s + it.cantidad * it.precio, 0)
+  const totalModal = itemsPedido.reduce((s,it) => s + it.cantidad * it.precio, 0)
 
-  const estCfg = {
-    borrador:{ l:'Borrador', bg:'#F1EFE8', color:'#5F5E5A' },
-    enviado: { l:'Enviado',  bg:'#EAF3DE', color:'#27500A' },
-    recibido:{ l:'Recibido', bg:'#E6F1FB', color:'#0C447C' },
-  }
-
-  const ths = { padding:'6px 10px', fontWeight:500, fontSize:11, color:'#666', borderBottom:'0.5px solid #e0dfd8', background:'#f5f5f3', whiteSpace:'nowrap' }
-  const tds = { padding:'6px 10px', borderBottom:'0.5px solid #f0efe8', fontSize:12 }
-
-  if (loading) return <div style={{ padding:20, color:'#aaa' }}>Cargando...</div>
+  if (loading) return <div style={{padding:20,color:'#aaa'}}>Cargando pedidos...</div>
 
   return (
-    <div style={{ padding:20, maxWidth:1000 }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
+    <div style={{padding:20, maxWidth:1300}}>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16}}>
         <div>
-          <h1 style={{ fontSize:17, fontWeight:500 }}>Pedidos de compra</h1>
-          <p style={{ fontSize:11, color:'#888', marginTop:2 }}>Solo se recomiendan referencias con rotación {'>'} 0 y {'<'} 2 semanas de stock</p>
+          <h1 style={{fontSize:17, fontWeight:500}}>Pedidos</h1>
+          <p style={{fontSize:11, color:'#888', marginTop:2}}>{pedidos.length} pedidos · flujo de aprobación activo</p>
         </div>
-        <button onClick={confirmar} disabled={saving||!propuesta.length}
-          style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:8, padding:'6px 14px', fontSize:12, cursor:'pointer', fontWeight:500, opacity:(saving||!propuesta.length)?0.5:1 }}>
-          {saving ? 'Guardando...' : '⚡ Confirmar pedido'}
-        </button>
       </div>
 
-      {/* Propuesta */}
-      <div style={{ background:'white', border:'0.5px solid #B5D4F4', borderTop:'3px solid #185FA5', borderRadius:10, padding:14, marginBottom:20 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
-          <div>
-            <p style={{ fontWeight:500 }}>Propuesta semana actual</p>
-            <p style={{ fontSize:11, color:'#888', marginTop:2 }}>
-              {propuesta.length} referencias · {formatMXN(totalPropuesta)} MXN
-              {propuesta.length === 0 && ' — no hay referencias críticas con rotación activa'}
-            </p>
-          </div>
-        </div>
-        {propuesta.length > 0 && (
-          <div style={{ overflowX:'auto' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-              <thead>
-                <tr>
-                  {['Taller','Ciudad','Cliente','SKU','Stock','Semanas','Pedir','Precio unit.','Total MXN'].map(h=>(
-                    <th key={h} style={ths}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {propuesta.map((r,i) => {
-                  const rc=REGIONES[r.region]??{}; const cc=CLIENTES[r.cliente]??CLIENTES.ind
-                  return (
-                    <tr key={i}>
-                      <td style={{ ...tds, fontWeight:500 }}>{r.taller}</td>
-                      <td style={{ ...tds, fontSize:10, fontWeight:500, color:rc.color }}>{rc.label}</td>
-                      <td style={tds}><span style={{ fontSize:9, padding:'1px 6px', borderRadius:20, background:cc.bg, color:cc.color, fontWeight:500 }}>{cc.label}</span></td>
-                      <td style={{ ...tds, fontFamily:'monospace', fontSize:11 }}>{r.sku}</td>
-                      <td style={{ ...tds, textAlign:'right', color:r.stock===0?'#A32D2D':'inherit', fontWeight:500 }}>{r.stock}</td>
-                      <td style={{ ...tds, textAlign:'right' }}>{r.stock===0?'—':Number(r.semanas).toFixed(1)}</td>
-                      <td style={{ ...tds, textAlign:'right', fontWeight:500, color:'#0C447C' }}>{r.pedir}</td>
-                      <td style={{ ...tds, textAlign:'right' }}>{formatMXN(r.precio)}</td>
-                      <td style={{ ...tds, textAlign:'right', fontWeight:500 }}>{formatMXN(r.total)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={7}/>
-                  <td colSpan={2} style={{ ...tds, textAlign:'right', fontWeight:500 }}>
-                    Total: {formatMXN(totalPropuesta)} MXN
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Historial */}
-      <p style={{ fontSize:12, fontWeight:500, color:'#888', marginBottom:8 }}>Historial de pedidos</p>
-      {pedidos.map(p => {
-        const est = estCfg[p.estado] ?? estCfg.borrador
-        const totalItems = p.pedido_items?.reduce((s,i)=>s+(i.precio_unit*i.cantidad),0) ?? 0
-        const diff = p.factura_valor ? p.factura_valor - totalItems : null
-        const isOpen = expandido === p.id
-        return (
-          <div key={p.id} style={{ background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, marginBottom:8, overflow:'hidden' }}>
-            {/* Fila principal */}
-            <div style={{ display:'flex', alignItems:'center', padding:'12px 14px', cursor:'pointer', gap:10 }}
-              onClick={() => setExpandido(isOpen ? null : p.id)}>
-              <div style={{ flex:1 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:2 }}>
-                  <span style={{ fontFamily:'monospace', fontSize:11, fontWeight:500, background:'#f5f5f3', padding:'1px 7px', borderRadius:6 }}>{p.numero_orden ?? '—'}</span>
-                  <span style={{ fontWeight:500 }}>{p.semana}</span>
-                  <span style={{ fontSize:10, padding:'2px 8px', borderRadius:20, background:est.bg, color:est.color, fontWeight:500 }}>{est.l}</span>
-                  {p.factura_valor && (
-                    <span style={{ fontSize:10, padding:'2px 8px', borderRadius:20,
-                      background: Math.abs(diff)<1 ? '#EAF3DE' : '#FCEBEB',
-                      color: Math.abs(diff)<1 ? '#27500A' : '#791F1F', fontWeight:500 }}>
-                      {Math.abs(diff)<1 ? '✓ Factura ok' : `Diferencia ${formatMXN(diff)}`}
-                    </span>
-                  )}
-                  {!p.factura_url && <span style={{ fontSize:10, color:'#854F0B', background:'#FAEEDA', padding:'2px 7px', borderRadius:20 }}>⚠ Sin factura</span>}
-                </div>
-                <p style={{ fontSize:11, color:'#888' }}>
-                  {p.fecha} · {p.pedido_items?.length ?? 0} refs · {formatMXN(totalItems)} MXN
-                  {p.factura_valor && ` · Factura: ${formatMXN(p.factura_valor)}`}
-                </p>
-              </div>
-              <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                <button onClick={e => { e.stopPropagation(); setModalFactura(p); setFormFactura({ url:p.factura_url??'', valor:p.factura_valor??'', file:null }) }}
-                  style={{ padding:'4px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, cursor:'pointer', background:'white' }}>
-                  {p.factura_url ? 'Ver factura' : '+ Factura'}
-                </button>
-                <span style={{ color:'#888', fontSize:12 }}>{isOpen ? '▲' : '▼'}</span>
-              </div>
+      {/* ── Propuesta ── */}
+      {canWrite && (
+        <div style={{background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, padding:16, marginBottom:20}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+            <div>
+              <p style={{fontWeight:500, fontSize:13}}>Propuesta de pedido</p>
+              <p style={{fontSize:11, color:'#888', marginTop:2}}>SKUs con cobertura &lt; 2 semanas y rotación activa</p>
             </div>
+            <button onClick={abrirModalPedido} style={btn()}>
+              Revisar y solicitar ({propuesta.length} ítems)
+            </button>
+          </div>
 
-            {/* Detalle expandible */}
-            {isOpen && (
-              <div style={{ borderTop:'0.5px solid #e0dfd8', padding:'0 14px 14px' }}>
-                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11, marginTop:10 }}>
-                  <thead>
-                    <tr>
-                      {['Taller','Ciudad','SKU','Cantidad','Precio unit.','Subtotal'].map(h=>(
-                        <th key={h} style={{ ...ths, fontSize:10 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(p.pedido_items ?? []).map(item => {
-                      const rc = REGIONES[item.talleres?.region] ?? {}
-                      return (
-                        <tr key={item.id}>
-                          <td style={{ ...tds, fontWeight:500 }}>{item.talleres?.nombre}</td>
-                          <td style={{ ...tds, fontSize:10, color:rc.color, fontWeight:500 }}>{rc.label}</td>
-                          <td style={{ ...tds, fontFamily:'monospace' }}>{item.skus?.codigo}</td>
-                          <td style={{ ...tds, textAlign:'right' }}>{item.cantidad}</td>
-                          <td style={{ ...tds, textAlign:'right' }}>{formatMXN(item.precio_unit)}</td>
-                          <td style={{ ...tds, textAlign:'right', fontWeight:500 }}>{formatMXN(item.precio_unit*item.cantidad)}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={4}/>
-                      <td style={{ ...tds, fontWeight:500, textAlign:'right' }}>Total pedido:</td>
-                      <td style={{ ...tds, fontWeight:500, textAlign:'right' }}>{formatMXN(totalItems)}</td>
-                    </tr>
-                    {p.factura_valor && (
-                      <tr>
-                        <td colSpan={4}/>
-                        <td style={{ ...tds, fontWeight:500, textAlign:'right' }}>Total factura:</td>
-                        <td style={{ ...tds, fontWeight:500, textAlign:'right', color: Math.abs(diff)<1?'#3B6D11':'#A32D2D' }}>{formatMXN(p.factura_valor)}</td>
-                      </tr>
-                    )}
-                  </tfoot>
-                </table>
-                {p.factura_url && (
-                  <div style={{ marginTop:10 }}>
-                    <a href={p.factura_url} target="_blank" rel="noreferrer"
-                      style={{ fontSize:11, color:'#185FA5', textDecoration:'none' }}>📄 Ver PDF de factura →</a>
-                  </div>
-                )}
-              </div>
+          {/* Filtros */}
+          <div style={{display:'flex', gap:10, marginBottom:12, flexWrap:'wrap', alignItems:'flex-end'}}>
+            <div>
+              <div style={{fontSize:10, color:'#888', marginBottom:3}}>Taller</div>
+              <select value={fTallerProp} onChange={e=>setFTallerProp(e.target.value)}
+                style={{padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:160}}>
+                <option value="">Todos los talleres</option>
+                {talleres.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:10, color:'#888', marginBottom:3}}>SKU</div>
+              <select value={fSkuProp} onChange={e=>setFSkuProp(e.target.value)}
+                style={{padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:140}}>
+                <option value="">Todos los SKUs</option>
+                {skus.map(s=><option key={s.id} value={s.id}>{s.codigo}</option>)}
+              </select>
+            </div>
+            {(fTallerProp||fSkuProp) && (
+              <button onClick={()=>{setFTallerProp('');setFSkuProp('')}}
+                style={{padding:'5px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, background:'white', cursor:'pointer'}}>
+                Limpiar
+              </button>
             )}
           </div>
-        )
-      })}
 
-      {/* Modal factura */}
+          {propuesta.length > 0 ? (
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+                <thead><tr>
+                  {['Taller','SKU','Stock','Rot/sem','Cobertura','Sugerido','Precio unit.','Subtotal'].map(h=>(
+                    <th key={h} style={th}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {propuesta.map((it,idx)=>(
+                    <tr key={idx} style={{background:idx%2===0?'white':'#fafafa'}}>
+                      <td style={td}>{it.taller_nom}</td>
+                      <td style={{...td, fontFamily:'monospace', fontSize:11}}>{it.sku_cod}</td>
+                      <td style={td}>{it.stock_actual}</td>
+                      <td style={td}>{it.rotacion.toFixed(1)}</td>
+                      <td style={{...td, color:'#A32D2D', fontWeight:500}}>{it.semanas} sem</td>
+                      <td style={{...td, fontWeight:500}}>{it.cantidad}</td>
+                      <td style={{...td, fontSize:11}}>{formatMXN(it.precio/IVA)} s/IVA</td>
+                      <td style={{...td, fontWeight:500}}>{formatMXN(it.cantidad*it.precio)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{background:'#f5f5f3'}}>
+                    <td colSpan={7} style={{...td, fontWeight:500, textAlign:'right'}}>Total estimado c/IVA:</td>
+                    <td style={{...td, fontWeight:500, color:'#1a4f8a'}}>{formatMXN(totalProp)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{color:'#aaa', fontSize:12, padding:'10px 0'}}>
+              {fTallerProp||fSkuProp ? 'Sin ítems críticos con los filtros aplicados.' : '🎉 Sin SKUs en nivel crítico actualmente.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Lista pedidos ── */}
+      <div style={{background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden'}}>
+        <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+          <thead><tr>
+            {['OC #','Fecha','Estado','Ítems','Total','UUID Factura','Aprobado por','Acciones'].map(h=>(
+              <th key={h} style={th}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {pedidos.length===0 && (
+              <tr><td colSpan={8} style={{padding:32, textAlign:'center', color:'#aaa'}}>No hay pedidos registrados</td></tr>
+            )}
+            {pedidos.map(p=>{
+              const ecfg = ESTADO_CFG[p.estado] ?? ESTADO_CFG.borrador
+              const items = Array.isArray(p.items) ? p.items : []
+              return (
+                <tr key={p.id}>
+                  <td style={{...td, fontWeight:500}}>OC-{p.numero_oc}</td>
+                  <td style={td}>{p.created_at?.slice(0,10)}</td>
+                  <td style={td}>
+                    <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:ecfg.bg, color:ecfg.color}}>
+                      {ecfg.label}
+                    </span>
+                  </td>
+                  <td style={td}>
+                    <button onClick={()=>setExpandido(expandido===p.id?null:p.id)}
+                      style={{background:'none', border:'none', cursor:'pointer', color:'#1a4f8a', fontSize:11, textDecoration:'underline'}}>
+                      {items.length} ítems {expandido===p.id?'▲':'▼'}
+                    </button>
+                    {expandido===p.id && (
+                      <div style={{marginTop:8, background:'#f9f9f7', borderRadius:6, padding:8}}>
+                        {items.map((it,i)=>{
+                          const s=skus.find(x=>x.id===it.sku_id)
+                          const t=talleres.find(x=>x.id===it.taller_id)
+                          return (
+                            <div key={i} style={{fontSize:11, padding:'2px 0', display:'flex', gap:8, color:'#555'}}>
+                              <span style={{color:'#888'}}>{t?.nombre}</span>
+                              <span style={{fontFamily:'monospace'}}>{s?.codigo}</span>
+                              <span>× {it.cantidad}</span>
+                              <span style={{color:'#1a4f8a'}}>{formatMXN(it.precio)}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{...td, fontWeight:500}}>{formatMXN(p.total)}</td>
+                  <td style={td}>
+                    {p.uuid_factura
+                      ? <span style={{fontFamily:'monospace', fontSize:10}}>{p.uuid_factura.slice(0,12)}...</span>
+                      : <span style={{color:'#ccc'}}>—</span>}
+                    {isAdmin && (
+                      <button onClick={()=>{setModalFactura(p);setUuidFact(p.uuid_factura||'')}}
+                        style={{marginLeft:6, fontSize:10, padding:'1px 7px', border:'0.5px solid #ccc', borderRadius:5, cursor:'pointer', background:'white'}}>
+                        {p.uuid_factura?'Editar':'Agregar'}
+                      </button>
+                    )}
+                  </td>
+                  <td style={{...td, fontSize:11, color:'#888'}}>
+                    {p.aprobador?.nombre ?? <span style={{color:'#ccc'}}>—</span>}
+                  </td>
+                  <td style={td}>
+                    <div style={{display:'flex', gap:5, flexWrap:'wrap'}}>
+                      {isAdmin && p.estado==='pendiente' && (
+                        <button onClick={()=>setModalAprobar(p)} style={btn('#166534')}>Aprobar</button>
+                      )}
+                      {canWrite && p.estado==='aprobado' && (
+                        <button onClick={()=>marcarEnviado(p.id)} style={btn('#1a4f8a')}>Enviado</button>
+                      )}
+                      {isAdmin && p.estado!=='enviado' && (
+                        <button onClick={()=>setConfirmDel(p)} style={btn('#E24B4A')}>Eliminar</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Modal edición pedido ── */}
+      {modalPedido && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
+          <div style={{background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:740, maxHeight:'92vh', overflowY:'auto'}}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
+              <div>
+                <p style={{fontWeight:500, fontSize:14}}>Revisar pedido antes de solicitar</p>
+                <p style={{fontSize:11, color:'#888', marginTop:2}}>Modifica cantidades o elimina ítems. Quedará pendiente de aprobación.</p>
+              </div>
+              <button onClick={()=>setModalPedido(false)} style={{background:'none', border:'0.5px solid #ccc', borderRadius:7, padding:'3px 10px', cursor:'pointer'}}>✕</button>
+            </div>
+
+            <table style={{width:'100%', borderCollapse:'collapse', fontSize:12, marginBottom:14}}>
+              <thead><tr style={{background:'#f5f5f3'}}>
+                <th style={th}>Taller</th><th style={th}>SKU</th>
+                <th style={th}>Stock actual</th><th style={th}>Cantidad</th>
+                <th style={th}>Precio unit.</th><th style={th}>Total</th><th style={th}></th>
+              </tr></thead>
+              <tbody>
+                {itemsPedido.map((it,idx)=>(
+                  <tr key={idx} style={{background:idx%2===0?'white':'#fafafa'}}>
+                    <td style={td}>{it.taller_nom}</td>
+                    <td style={{...td, fontFamily:'monospace', fontSize:11}}>{it.sku_cod}</td>
+                    <td style={td}>{it.stock_actual}</td>
+                    <td style={td}>
+                      <input type="number" min="0" value={it.cantidad}
+                        onChange={e=>updateItem(idx, e.target.value)}
+                        style={{...inp, width:70}} />
+                    </td>
+                    <td style={{...td, fontSize:11}}>{formatMXN(it.precio/IVA)} s/IVA</td>
+                    <td style={{...td, fontWeight:500}}>{formatMXN(it.cantidad*it.precio)}</td>
+                    <td style={td}>
+                      <button onClick={()=>removeItem(idx)}
+                        style={{background:'#FCEBEB', color:'#A32D2D', border:'none', borderRadius:6, padding:'2px 8px', fontSize:11, cursor:'pointer'}}>
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div style={{background:'#EAF3DE', borderRadius:8, padding:'10px 14px', marginBottom:12, display:'flex', justifyContent:'space-between'}}>
+              <span style={{fontSize:12, color:'#3B6D11'}}>{itemsPedido.filter(it=>it.cantidad>0).length} ítems · Total c/IVA</span>
+              <span style={{fontWeight:500, fontSize:13, color:'#1a4f8a'}}>{formatMXN(totalModal)}</span>
+            </div>
+            <div style={{background:'#FEF9C3', borderRadius:8, padding:'8px 12px', marginBottom:14, fontSize:11, color:'#854D0E'}}>
+              ⏳ El pedido quedará en <strong>pendiente de aprobación</strong>. Un administrador debe aprobarlo antes de enviarse al proveedor.
+            </div>
+
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setModalPedido(false)}
+                style={{padding:'6px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={confirmarPedido} disabled={saving||!itemsPedido.filter(it=>it.cantidad>0).length}
+                style={{...btn(), opacity:saving?0.7:1}}>
+                {saving?'Enviando...':'Solicitar pedido →'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal aprobación ── */}
+      {modalAprobar && isAdmin && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:460}}>
+            <p style={{fontWeight:500, marginBottom:8}}>Aprobar pedido OC-{modalAprobar.numero_oc}</p>
+            <p style={{fontSize:12, color:'#888', marginBottom:14}}>
+              {Array.isArray(modalAprobar.items)?modalAprobar.items.length:0} ítems · {formatMXN(modalAprobar.total)}
+            </p>
+            <div style={{background:'#EAF3DE', borderRadius:7, padding:'8px 12px', fontSize:11, color:'#166534', marginBottom:14}}>
+              ✅ Al aprobar, el pedido podrá marcarse como enviado al proveedor.
+            </div>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:11, color:'#666', display:'block', marginBottom:4}}>Notas (opcional)</label>
+              <input type="text" value={notasAprob} onChange={e=>setNotasAprob(e.target.value)}
+                style={inp} placeholder="Ej: Autorizado por dirección" />
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={rechazarPedido}
+                style={{padding:'5px 13px', background:'#FEE2E2', color:'#991B1B', border:'none', borderRadius:7, fontSize:12, cursor:'pointer'}}>
+                Rechazar
+              </button>
+              <button onClick={()=>{setModalAprobar(null);setNotasAprob('')}}
+                style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={aprobarPedido} style={btn('#166534')}>✅ Aprobar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal factura ── */}
       {modalFactura && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
-          <div style={{ background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:420 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
-              <p style={{ fontWeight:500 }}>Factura — {modalFactura.numero_orden}</p>
-              <button onClick={()=>setModalFactura(null)} style={{ background:'none', border:'0.5px solid #ccc', borderRadius:7, padding:'3px 10px', cursor:'pointer' }}>✕</button>
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:20, width:'100%', maxWidth:400}}>
+            <p style={{fontWeight:500, marginBottom:12}}>UUID Factura — OC-{modalFactura.numero_oc}</p>
+            <input type="text" value={uuidFact} onChange={e=>setUuidFact(e.target.value)}
+              placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+              style={{...inp, fontFamily:'monospace', fontSize:11, marginBottom:12}}/>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setModalFactura(null)} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
+              <button onClick={guardarFactura} style={btn()}>Guardar</button>
             </div>
-            <div style={{ marginBottom:10 }}>
-              <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>Valor de la factura (MXN con IVA)</label>
-              <input type="number" value={formFactura.valor} onChange={e=>setFormFactura(f=>({...f,valor:e.target.value}))}
-                style={{ width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }} />
-              {formFactura.valor && (
-                <p style={{ fontSize:11, marginTop:4, color: Math.abs(parseFloat(formFactura.valor)-(modalFactura.pedido_items?.reduce((s,i)=>s+i.precio_unit*i.cantidad,0)??0))<1 ? '#3B6D11':'#A32D2D' }}>
-                  {Math.abs(parseFloat(formFactura.valor)-(modalFactura.pedido_items?.reduce((s,i)=>s+i.precio_unit*i.cantidad,0)??0))<1
-                    ? '✓ Coincide con el valor del pedido'
-                    : `Diferencia: ${formatMXN(parseFloat(formFactura.valor)-(modalFactura.pedido_items?.reduce((s,i)=>s+i.precio_unit*i.cantidad,0)??0))}`}
-                </p>
-              )}
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>PDF de la factura</label>
-              <label style={{ border:'1.5px dashed #ccc', borderRadius:9, padding:'14px', textAlign:'center', display:'block', cursor:'pointer', fontSize:11, color:'#888' }}>
-                <div style={{ fontSize:18, marginBottom:4 }}>📄</div>
-                {formFactura.file ? formFactura.file.name : 'Seleccionar PDF'}
-                <input type="file" accept="application/pdf" style={{ display:'none' }}
-                  onChange={e=>setFormFactura(f=>({...f,file:e.target.files[0]}))} />
-              </label>
-            </div>
-            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
-              <button onClick={()=>setModalFactura(null)} style={{ padding:'6px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>Cancelar</button>
-              <button onClick={guardarFactura} style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:7, padding:'6px 14px', fontSize:12, cursor:'pointer' }}>Guardar factura</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal confirmar eliminar ── */}
+      {confirmDel && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:360}}>
+            <p style={{fontWeight:500, marginBottom:8}}>¿Eliminar pedido OC-{confirmDel.numero_oc}?</p>
+            <p style={{fontSize:12, color:'#888', marginBottom:16}}>Esta acción no puede deshacerse.</p>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmDel(null)} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
+              <button onClick={()=>eliminarPedido(confirmDel.id)} style={btn('#E24B4A')}>Sí, eliminar</button>
             </div>
           </div>
         </div>

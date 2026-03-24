@@ -69,7 +69,8 @@ export default function Pedidos() {
       if (fSkuProp    && r.sku_id    !== fSkuProp)    return
       const sku = skus.find(s => s.id === r.sku_id)
       if (!sku) return
-      const cantPedir = Math.max(1, Math.round(r.rotacion * 4) - r.stock)
+      const cantPedir = Math.ceil(r.rotacion * 2) - r.stock
+	if (cantPedir <= 0) return
       items.push({
         taller_id:r.taller_id, taller_nom:r.taller,
         sku_id:r.sku_id, sku_cod:r.sku,

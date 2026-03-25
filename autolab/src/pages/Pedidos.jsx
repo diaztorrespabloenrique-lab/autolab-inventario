@@ -37,12 +37,17 @@ export default function Pedidos() {
   const [itemsPedido, setItemsPedido] = useState([])
   const [saving,      setSaving]      = useState(false)
 
-  const [modalAprobar,  setModalAprobar]  = useState(null)
-  const [notasAprob,    setNotasAprob]    = useState('')
-  const [expandido,     setExpandido]     = useState(null)
-  const [modalFactura,  setModalFactura]  = useState(null)
-  const [uuidFact,      setUuidFact]      = useState('')
-  const [confirmDel,    setConfirmDel]    = useState(null)
+  // Estado para agregar ítem manual en el modal
+  const [nuevoTaller, setNuevoTaller] = useState('')
+  const [nuevoSku,    setNuevoSku]    = useState('')
+  const [nuevaCant,   setNuevaCant]   = useState('1')
+
+  const [modalAprobar, setModalAprobar] = useState(null)
+  const [notasAprob,   setNotasAprob]   = useState('')
+  const [expandido,    setExpandido]    = useState(null)
+  const [modalFactura, setModalFactura] = useState(null)
+  const [uuidFact,     setUuidFact]     = useState('')
+  const [confirmDel,   setConfirmDel]   = useState(null)
 
   useEffect(() => { load() }, [])
 
@@ -69,14 +74,13 @@ export default function Pedidos() {
       if (fSkuProp    && r.sku_id    !== fSkuProp)    return
       const sku = skus.find(s => s.id === r.sku_id)
       if (!sku) return
-      const cantPedir = Math.ceil(r.rotacion * 2) - r.stock
-	if (cantPedir <= 0) return
+      const cantPedir = Math.max(1, Math.round(r.rotacion * 4) - r.stock)
       items.push({
         taller_id:r.taller_id, taller_nom:r.taller,
         sku_id:r.sku_id, sku_cod:r.sku,
         cantidad:cantPedir, precio:sku.precio||0,
         stock_actual:r.stock, rotacion:r.rotacion,
-        semanas:sem.toFixed(1),
+        semanas:sem.toFixed(1), esManual:false,
       })
     })
     return items
@@ -84,8 +88,8 @@ export default function Pedidos() {
 
   function abrirModalPedido() {
     const items = generarPropuesta()
-    if (!items.length) { alert('No hay SKUs críticos para los filtros aplicados'); return }
     setItemsPedido(items)
+    setNuevoTaller(''); setNuevoSku(''); setNuevaCant('1')
     setModalPedido(true)
   }
 
@@ -96,6 +100,39 @@ export default function Pedidos() {
   }
   function removeItem(idx) {
     setItemsPedido(prev => prev.filter((_,i) => i!==idx))
+  }
+
+  // Agregar ítem manual al pedido
+  function agregarItemManual() {
+    if (!nuevoTaller || !nuevoSku) return
+    const taller = talleres.find(t => t.id === nuevoTaller)
+    const sku    = skus.find(s => s.id === nuevoSku)
+    if (!taller || !sku) return
+
+    // Si ya existe ese par taller+sku, solo sumar la cantidad
+    const yaExiste = itemsPedido.findIndex(it => it.taller_id === nuevoTaller && it.sku_id === nuevoSku)
+    if (yaExiste >= 0) {
+      setItemsPedido(prev => prev.map((it, i) =>
+        i === yaExiste ? { ...it, cantidad: it.cantidad + (parseInt(nuevaCant)||1) } : it
+      ))
+    } else {
+      const registroInv = inv.find(r => r.taller_id === nuevoTaller && r.sku_id === nuevoSku)
+      setItemsPedido(prev => [...prev, {
+        taller_id:  nuevoTaller,
+        taller_nom: taller.nombre,
+        sku_id:     nuevoSku,
+        sku_cod:    sku.codigo,
+        cantidad:   parseInt(nuevaCant)||1,
+        precio:     sku.precio||0,
+        stock_actual: registroInv?.stock ?? 0,
+        rotacion:   registroInv?.rotacion ?? 0,
+        semanas:    registroInv?.rotacion > 0
+          ? ((registroInv.stock / registroInv.rotacion).toFixed(1))
+          : '—',
+        esManual: true,
+      }])
+    }
+    setNuevoTaller(''); setNuevoSku(''); setNuevaCant('1')
   }
 
   async function confirmarPedido() {
@@ -137,7 +174,7 @@ export default function Pedidos() {
 
   async function eliminarPedido(id) {
     const { error } = await supabase.from('pedidos').delete().eq('id', id)
-    if (error) alert('Error al eliminar: ' + error.message)
+    if (error) alert('Error: ' + error.message)
     setConfirmDel(null); load()
   }
 
@@ -149,6 +186,7 @@ export default function Pedidos() {
   const propuesta  = generarPropuesta()
   const totalProp  = propuesta.reduce((s,it) => s + it.cantidad * it.precio, 0)
   const totalModal = itemsPedido.reduce((s,it) => s + it.cantidad * it.precio, 0)
+  const manualesCount = itemsPedido.filter(it => it.esManual).length
 
   if (loading) return <div style={{padding:20,color:'#aaa'}}>Cargando pedidos...</div>
 
@@ -167,10 +205,10 @@ export default function Pedidos() {
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
             <div>
               <p style={{fontWeight:500, fontSize:13}}>Propuesta de pedido</p>
-              <p style={{fontSize:11, color:'#888', marginTop:2}}>SKUs con cobertura &lt; 2 semanas y rotación activa</p>
+              <p style={{fontSize:11, color:'#888', marginTop:2}}>SKUs con cobertura &lt; 2 semanas · puedes agregar cualquier SKU adicional en el paso siguiente</p>
             </div>
             <button onClick={abrirModalPedido} style={btn()}>
-              Revisar y solicitar ({propuesta.length} ítems)
+              Revisar y solicitar ({propuesta.length} ítems recomendados)
             </button>
           </div>
 
@@ -320,27 +358,45 @@ export default function Pedidos() {
       {/* ── Modal edición pedido ── */}
       {modalPedido && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
-          <div style={{background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:740, maxHeight:'92vh', overflowY:'auto'}}>
+          <div style={{background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:800, maxHeight:'92vh', overflowY:'auto'}}>
             <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
               <div>
-                <p style={{fontWeight:500, fontSize:14}}>Revisar pedido antes de solicitar</p>
-                <p style={{fontSize:11, color:'#888', marginTop:2}}>Modifica cantidades o elimina ítems. Quedará pendiente de aprobación.</p>
+                <p style={{fontWeight:500, fontSize:14}}>Revisar y armar pedido</p>
+                <p style={{fontSize:11, color:'#888', marginTop:2}}>
+                  Modifica cantidades, quita ítems o agrega SKUs adicionales.
+                  {manualesCount > 0 && <span style={{marginLeft:6, color:'#0C447C', fontWeight:500}}>{manualesCount} ítem{manualesCount>1?'s':''} agregado{manualesCount>1?'s':''} manualmente</span>}
+                </p>
               </div>
               <button onClick={()=>setModalPedido(false)} style={{background:'none', border:'0.5px solid #ccc', borderRadius:7, padding:'3px 10px', cursor:'pointer'}}>✕</button>
             </div>
 
-            <table style={{width:'100%', borderCollapse:'collapse', fontSize:12, marginBottom:14}}>
+            {/* Tabla de ítems */}
+            <table style={{width:'100%', borderCollapse:'collapse', fontSize:12, marginBottom:6}}>
               <thead><tr style={{background:'#f5f5f3'}}>
                 <th style={th}>Taller</th><th style={th}>SKU</th>
-                <th style={th}>Stock actual</th><th style={th}>Cantidad</th>
-                <th style={th}>Precio unit.</th><th style={th}>Total</th><th style={th}></th>
+                <th style={th}>Stock actual</th><th style={th}>Rotación</th>
+                <th style={th}>Cantidad</th><th style={th}>Precio unit.</th>
+                <th style={th}>Total</th><th style={th}></th>
               </tr></thead>
               <tbody>
+                {itemsPedido.length === 0 && (
+                  <tr><td colSpan={8} style={{...td, textAlign:'center', color:'#aaa', padding:20}}>
+                    No hay ítems. Agrega SKUs usando el formulario de abajo.
+                  </td></tr>
+                )}
                 {itemsPedido.map((it,idx)=>(
-                  <tr key={idx} style={{background:idx%2===0?'white':'#fafafa'}}>
-                    <td style={td}>{it.taller_nom}</td>
+                  <tr key={idx} style={{background: it.esManual ? '#EEF4FF' : idx%2===0?'white':'#fafafa'}}>
+                    <td style={td}>
+                      {it.taller_nom}
+                      {it.esManual && (
+                        <span style={{marginLeft:5, fontSize:9, padding:'1px 5px', borderRadius:20, background:'#DBEAFE', color:'#1E40AF', fontWeight:500}}>
+                          manual
+                        </span>
+                      )}
+                    </td>
                     <td style={{...td, fontFamily:'monospace', fontSize:11}}>{it.sku_cod}</td>
-                    <td style={td}>{it.stock_actual}</td>
+                    <td style={{...td, color:'#888'}}>{it.stock_actual ?? '—'}</td>
+                    <td style={{...td, color:'#888'}}>{typeof it.rotacion === 'number' ? it.rotacion.toFixed(1) : '—'}</td>
                     <td style={td}>
                       <input type="number" min="0" value={it.cantidad}
                         onChange={e=>updateItem(idx, e.target.value)}
@@ -359,8 +415,66 @@ export default function Pedidos() {
               </tbody>
             </table>
 
+            {/* ── Sección agregar SKU manual ── */}
+            <div style={{background:'#F0F7FF', border:'1px solid #BFDBFE', borderRadius:9, padding:12, marginBottom:14}}>
+              <p style={{fontSize:12, fontWeight:500, color:'#1E40AF', marginBottom:10}}>
+                + Agregar SKU al pedido
+              </p>
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 100px auto', gap:8, alignItems:'flex-end'}}>
+                <div>
+                  <div style={{fontSize:10, color:'#555', marginBottom:3}}>Taller *</div>
+                  <select value={nuevoTaller} onChange={e=>setNuevoTaller(e.target.value)}
+                    style={{...inp, fontSize:11}}>
+                    <option value="">Seleccionar...</option>
+                    {talleres.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:10, color:'#555', marginBottom:3}}>SKU *</div>
+                  <select value={nuevoSku} onChange={e=>setNuevoSku(e.target.value)}
+                    style={{...inp, fontSize:11}}>
+                    <option value="">Seleccionar...</option>
+                    {skus.map(s=><option key={s.id} value={s.id}>{s.codigo}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:10, color:'#555', marginBottom:3}}>Cantidad *</div>
+                  <input type="number" min="1" value={nuevaCant} onChange={e=>setNuevaCant(e.target.value)}
+                    style={inp} />
+                </div>
+                <button
+                  onClick={agregarItemManual}
+                  disabled={!nuevoTaller || !nuevoSku}
+                  style={{
+                    ...btn('#1E40AF'),
+                    opacity: !nuevoTaller || !nuevoSku ? 0.4 : 1,
+                    whiteSpace:'nowrap', alignSelf:'flex-end', padding:'7px 14px'
+                  }}>
+                  Agregar
+                </button>
+              </div>
+              {/* Vista previa del precio al seleccionar SKU */}
+              {nuevoSku && (()=>{
+                const s = skus.find(x=>x.id===nuevoSku)
+                const t = nuevoTaller ? talleres.find(x=>x.id===nuevoTaller) : null
+                const regInv = nuevoTaller && nuevoSku ? inv.find(r=>r.taller_id===nuevoTaller&&r.sku_id===nuevoSku) : null
+                return s ? (
+                  <div style={{marginTop:8, fontSize:11, color:'#1E40AF', display:'flex', gap:16}}>
+                    <span>Precio: <strong>{formatMXN(s.precio)}</strong> c/IVA</span>
+                    {regInv !== undefined && <span>Stock actual en {t?.nombre ?? '...'}: <strong>{regInv?.stock ?? 0}</strong></span>}
+                    <span>Subtotal: <strong>{formatMXN((s.precio||0)*(parseInt(nuevaCant)||1))}</strong></span>
+                  </div>
+                ) : null
+              })()}
+            </div>
+
+            {/* Total y aviso */}
             <div style={{background:'#EAF3DE', borderRadius:8, padding:'10px 14px', marginBottom:12, display:'flex', justifyContent:'space-between'}}>
-              <span style={{fontSize:12, color:'#3B6D11'}}>{itemsPedido.filter(it=>it.cantidad>0).length} ítems · Total c/IVA</span>
+              <span style={{fontSize:12, color:'#3B6D11'}}>
+                {itemsPedido.filter(it=>it.cantidad>0).length} ítems
+                {manualesCount > 0 && ` (${manualesCount} manuales)`}
+                {' · '}Total c/IVA
+              </span>
               <span style={{fontWeight:500, fontSize:13, color:'#1a4f8a'}}>{formatMXN(totalModal)}</span>
             </div>
             <div style={{background:'#FEF9C3', borderRadius:8, padding:'8px 12px', marginBottom:14, fontSize:11, color:'#854D0E'}}>
@@ -373,7 +487,7 @@ export default function Pedidos() {
                 Cancelar
               </button>
               <button onClick={confirmarPedido} disabled={saving||!itemsPedido.filter(it=>it.cantidad>0).length}
-                style={{...btn(), opacity:saving?0.7:1}}>
+                style={{...btn(), opacity:saving||!itemsPedido.filter(it=>it.cantidad>0).length?0.5:1}}>
                 {saving?'Enviando...':'Solicitar pedido →'}
               </button>
             </div>

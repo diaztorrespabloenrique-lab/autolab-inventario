@@ -38,58 +38,228 @@ export default function Admin() {
   )
 }
 
-// ── TAB: TALLERES ──────────────────────────────────────────
-function TabTalleres() {
-  const [talleres, setTalleres] = useState([])
-  const [modal,    setModal]    = useState(false)
-  const [form,     setForm]     = useState({ nombre:'', region:'cdmx', cliente:'minave', activo:true })
-  const [editing,  setEditing]  = useState(null)
-  const [loading,  setLoading]  = useState(true)
+// ── TAB: PROVEEDORES ──────────────────────────────────────
+function TabProveedores() {
+  const [proveedores, setProveedores] = useState([])
+  const [modal,   setModal]   = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [editing, setEditing] = useState(null)
+  const initForm = { nombre:'', rfc:'', contacto:'', email:'', telefono:'', activo:true }
+  const [form, setForm] = useState(initForm)
 
-  useEffect(()=>{ loadTalleres() },[])
+  useEffect(() => { load() }, [])
 
-  async function loadTalleres() {
-    const { data } = await supabase.from('talleres').select('*').order('region').order('nombre')
-    setTalleres(data??[]); setLoading(false)
+  async function load() {
+    const { data } = await supabase.from('proveedores').select('*').order('nombre')
+    setProveedores(data ?? [])
   }
 
-  function abrirNuevo() {
-    setForm({ nombre:'', region:'cdmx', cliente:'minave', activo:true })
-    setEditing(null); setModal(true)
-  }
-
-  function abrirEditar(t) {
-    setForm({ nombre:t.nombre, region:t.region, cliente:t.cliente, activo:t.activo })
-    setEditing(t.id); setModal(true)
+  function abrir(p = null) {
+    setForm(p
+      ? { nombre:p.nombre??'', rfc:p.rfc??'', contacto:p.contacto??'', email:p.email??'', telefono:p.telefono??'', activo:p.activo??true }
+      : initForm
+    )
+    setEditing(p?.id ?? null)
+    setModal(true)
   }
 
   async function guardar() {
     if (!form.nombre.trim()) { alert('El nombre es requerido'); return }
-    if (editing) {
-      await supabase.from('talleres').update(form).eq('id', editing)
-    } else {
-      await supabase.from('talleres').insert(form)
+    setSaving(true)
+
+    const payload = {
+      nombre:   form.nombre.trim(),
+      rfc:      form.rfc.trim()      || null,
+      contacto: form.contacto.trim() || null,
+      email:    form.email.trim()    || null,
+      telefono: form.telefono.trim() || null,
+      activo:   form.activo,
     }
-    setModal(false); loadTalleres()
-  }
 
-  async function toggleActivo(t) {
-    await supabase.from('talleres').update({ activo:!t.activo }).eq('id', t.id)
-    loadTalleres()
-  }
+    let error
+    if (editing) {
+      const res = await supabase.from('proveedores').update(payload).eq('id', editing)
+      error = res.error
+    } else {
+      const res = await supabase.from('proveedores').insert(payload)
+      error = res.error
+    }
 
-  if (loading) return <div style={{color:'#aaa', fontSize:13}}>Cargando...</div>
+    if (error) {
+      alert('Error al guardar: ' + error.message)
+    } else {
+      setModal(false)
+      setEditing(null)
+      setForm(initForm)
+      load()
+    }
+    setSaving(false)
+  }
 
   return (
     <div>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
-        <p style={{fontSize:13, color:'#888'}}>{talleres.length} talleres registrados</p>
-        <button onClick={abrirNuevo} style={btn()}>+ Nuevo taller</button>
+        <p style={{fontSize:13, color:'#888'}}>{proveedores.filter(p=>p.activo).length} proveedores activos · {proveedores.length} total</p>
+        <button onClick={()=>abrir()} style={btn()}>+ Nuevo proveedor</button>
       </div>
 
-      {/* Agrupado por ciudad */}
+      <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+        <thead><tr>
+          <th style={th}>Nombre</th>
+          <th style={th}>RFC</th>
+          <th style={th}>Contacto</th>
+          <th style={th}>Email</th>
+          <th style={th}>Teléfono</th>
+          <th style={th}>Estado</th>
+          <th style={th}>Acciones</th>
+        </tr></thead>
+        <tbody>
+          {proveedores.length === 0 && (
+            <tr><td colSpan={7} style={{padding:24, textAlign:'center', color:'#aaa'}}>No hay proveedores registrados</td></tr>
+          )}
+          {proveedores.map(p => (
+            <tr key={p.id} style={{opacity:p.activo?1:0.5}}>
+              <td style={{...td, fontWeight:500}}>{p.nombre}</td>
+              <td style={{...td, fontFamily:'monospace', fontSize:11}}>{p.rfc ?? <span style={{color:'#ccc'}}>—</span>}</td>
+              <td style={td}>{p.contacto ?? <span style={{color:'#ccc'}}>—</span>}</td>
+              <td style={{...td, fontSize:11}}>{p.email ?? <span style={{color:'#ccc'}}>—</span>}</td>
+              <td style={td}>{p.telefono ?? <span style={{color:'#ccc'}}>—</span>}</td>
+              <td style={td}>
+                <span style={{padding:'1px 7px', borderRadius:20, fontSize:10, fontWeight:500,
+                  background:p.activo?'#EAF3DE':'#F1EFE8', color:p.activo?'#166534':'#888'}}>
+                  {p.activo ? 'Activo' : 'Inactivo'}
+                </span>
+              </td>
+              <td style={td}>
+                <button onClick={()=>abrir(p)} style={{...btn(), padding:'3px 10px', fontSize:10}}>Editar</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {modal && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:22, width:'100%', maxWidth:460}}>
+            <p style={{fontWeight:500, marginBottom:16}}>{editing ? 'Editar proveedor' : 'Nuevo proveedor'}</p>
+
+            <div style={{marginBottom:10}}>
+              <label style={lbl}>Nombre *</label>
+              <input style={inp} value={form.nombre}
+                onChange={e=>setForm(f=>({...f, nombre:e.target.value}))}
+                placeholder="Ej: Distribuidora Llantera SA" />
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10}}>
+              <div>
+                <label style={lbl}>RFC</label>
+                <input style={{...inp, textTransform:'uppercase'}} value={form.rfc}
+                  onChange={e=>setForm(f=>({...f, rfc:e.target.value.toUpperCase()}))}
+                  placeholder="Ej: DLL900101XX1" />
+              </div>
+              <div>
+                <label style={lbl}>Teléfono</label>
+                <input style={inp} value={form.telefono}
+                  onChange={e=>setForm(f=>({...f, telefono:e.target.value}))}
+                  placeholder="Ej: 55 1234 5678" />
+              </div>
+            </div>
+
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10}}>
+              <div>
+                <label style={lbl}>Nombre de contacto</label>
+                <input style={inp} value={form.contacto}
+                  onChange={e=>setForm(f=>({...f, contacto:e.target.value}))}
+                  placeholder="Ej: Juan Pérez" />
+              </div>
+              <div>
+                <label style={lbl}>Email <span style={{color:'#aaa', fontSize:10}}>(para envío de OC)</span></label>
+                <input type="email" style={inp} value={form.email}
+                  onChange={e=>setForm(f=>({...f, email:e.target.value}))}
+                  placeholder="proveedor@empresa.com" />
+              </div>
+            </div>
+
+            <div style={{marginBottom:16}}>
+              <label style={{...lbl, display:'flex', alignItems:'center', gap:7, cursor:'pointer'}}>
+                <input type="checkbox" checked={form.activo}
+                  onChange={e=>setForm(f=>({...f, activo:e.target.checked}))} />
+                Proveedor activo
+              </label>
+            </div>
+
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>{ setModal(false); setEditing(null); setForm(initForm) }}
+                style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={guardar} disabled={saving}
+                style={{...btn(), opacity:saving?0.7:1}}>
+                {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── TAB: TALLERES ──────────────────────────────────────────
+function TabTalleres() {
+  const [talleres, setTalleres] = useState([])
+  const [modal,    setModal]    = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const [editing,  setEditing]  = useState(null)
+  const initForm = { nombre:'', region:'cdmx', cliente:'minave', activo:true }
+  const [form, setForm] = useState(initForm)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    const { data } = await supabase.from('talleres').select('*').order('region').order('nombre')
+    setTalleres(data ?? [])
+  }
+
+  function abrir(t = null) {
+    setForm(t
+      ? { nombre:t.nombre, region:t.region, cliente:t.cliente, activo:t.activo }
+      : initForm
+    )
+    setEditing(t?.id ?? null)
+    setModal(true)
+  }
+
+  async function guardar() {
+    if (!form.nombre.trim()) { alert('El nombre es requerido'); return }
+    setSaving(true)
+    let error
+    if (editing) {
+      const res = await supabase.from('talleres').update({ nombre:form.nombre.trim(), region:form.region, cliente:form.cliente, activo:form.activo }).eq('id', editing)
+      error = res.error
+    } else {
+      const res = await supabase.from('talleres').insert({ nombre:form.nombre.trim(), region:form.region, cliente:form.cliente, activo:form.activo })
+      error = res.error
+    }
+    if (error) alert('Error: ' + error.message)
+    else { setModal(false); setEditing(null); setForm(initForm); load() }
+    setSaving(false)
+  }
+
+  async function toggleActivo(t) {
+    await supabase.from('talleres').update({ activo:!t.activo }).eq('id', t.id)
+    load()
+  }
+
+  return (
+    <div>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
+        <p style={{fontSize:13, color:'#888'}}>{talleres.filter(t=>t.activo).length} activos · {talleres.length} total</p>
+        <button onClick={()=>abrir()} style={btn()}>+ Nuevo taller</button>
+      </div>
+
       {Object.entries(REGIONES).map(([regKey, regCfg]) => {
-        const grupo = talleres.filter(t=>t.region===regKey)
+        const grupo = talleres.filter(t => t.region === regKey)
         if (!grupo.length) return null
         return (
           <div key={regKey} style={{marginBottom:20}}>
@@ -102,7 +272,7 @@ function TabTalleres() {
                 <th style={th}>Ciudad</th><th style={th}>Estado</th><th style={th}>Acciones</th>
               </tr></thead>
               <tbody>
-                {grupo.map(t=>{
+                {grupo.map(t => {
                   const cc = CLIENTES[t.cliente] ?? CLIENTES.ind
                   return (
                     <tr key={t.id} style={{opacity:t.activo?1:0.5}}>
@@ -121,7 +291,7 @@ function TabTalleres() {
                       </td>
                       <td style={td}>
                         <div style={{display:'flex', gap:5}}>
-                          <button onClick={()=>abrirEditar(t)} style={{...btn(), padding:'3px 10px', fontSize:10}}>Editar</button>
+                          <button onClick={()=>abrir(t)} style={{...btn(), padding:'3px 10px', fontSize:10}}>Editar</button>
                           <button onClick={()=>toggleActivo(t)}
                             style={{padding:'3px 10px', fontSize:10, border:'0.5px solid #ccc', borderRadius:7, cursor:'pointer', background:'white'}}>
                             {t.activo?'Desactivar':'Activar'}
@@ -137,7 +307,6 @@ function TabTalleres() {
         )
       })}
 
-      {/* Modal nuevo/editar */}
       {modal && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
           <div style={{background:'white', borderRadius:12, padding:22, width:'100%', maxWidth:420}}>
@@ -150,17 +319,13 @@ function TabTalleres() {
               <div>
                 <label style={lbl}>Ciudad *</label>
                 <select style={inp} value={form.region} onChange={e=>setForm(f=>({...f,region:e.target.value}))}>
-                  {Object.entries(REGIONES).map(([k,v])=>(
-                    <option key={k} value={k}>{v.label}</option>
-                  ))}
+                  {Object.entries(REGIONES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
                 </select>
               </div>
               <div>
                 <label style={lbl}>Cliente *</label>
                 <select style={inp} value={form.cliente} onChange={e=>setForm(f=>({...f,cliente:e.target.value}))}>
-                  {Object.entries(CLIENTES).map(([k,v])=>(
-                    <option key={k} value={k}>{v.label}</option>
-                  ))}
+                  {Object.entries(CLIENTES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
                 </select>
               </div>
             </div>
@@ -171,8 +336,11 @@ function TabTalleres() {
               </label>
             </div>
             <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
-              <button onClick={()=>setModal(false)} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
-              <button onClick={guardar} style={btn()}>Guardar</button>
+              <button onClick={()=>{setModal(false);setEditing(null);setForm(initForm)}}
+                style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
+              <button onClick={guardar} disabled={saving} style={{...btn(), opacity:saving?0.7:1}}>
+                {saving?'Guardando...':'Guardar'}
+              </button>
             </div>
           </div>
         </div>
@@ -189,9 +357,9 @@ function TabUsuarios() {
   const [editing,  setEditing]  = useState(null)
   const [form,     setForm]     = useState({ nombre:'', rol:'staff' })
 
-  useEffect(()=>{ loadUsuarios() },[])
+  useEffect(()=>{ load() },[])
 
-  async function loadUsuarios() {
+  async function load() {
     const { data } = await supabase.from('perfiles').select('*').order('nombre')
     setUsuarios(data??[]); setLoading(false)
   }
@@ -199,8 +367,11 @@ function TabUsuarios() {
   function abrirEditar(u) { setForm({ nombre:u.nombre, rol:u.rol }); setEditing(u.id); setModal(true) }
 
   async function guardar() {
-    if (editing) await supabase.from('perfiles').update({ rol:form.rol }).eq('id', editing)
-    setModal(false); loadUsuarios()
+    if (editing) {
+      const { error } = await supabase.from('perfiles').update({ rol:form.rol }).eq('id', editing)
+      if (error) { alert('Error: ' + error.message); return }
+    }
+    setModal(false); load()
   }
 
   if (loading) return <div style={{color:'#aaa', fontSize:13}}>Cargando...</div>
@@ -260,8 +431,9 @@ function TabUsuarios() {
 function TabTipos() {
   const [tipos,   setTipos]   = useState([])
   const [modal,   setModal]   = useState(false)
-  const [form,    setForm]    = useState({ nombre:'' })
+  const [saving,  setSaving]  = useState(false)
   const [editing, setEditing] = useState(null)
+  const [form,    setForm]    = useState({ nombre:'' })
 
   useEffect(()=>{ load() },[])
   async function load() {
@@ -271,9 +443,18 @@ function TabTipos() {
   function abrir(t=null) { setForm({ nombre:t?.nombre??'' }); setEditing(t?.id??null); setModal(true) }
   async function guardar() {
     if (!form.nombre.trim()) { alert('El nombre es requerido'); return }
-    if (editing) await supabase.from('tipos_refaccion').update(form).eq('id', editing)
-    else await supabase.from('tipos_refaccion').insert(form)
-    setModal(false); load()
+    setSaving(true)
+    let error
+    if (editing) {
+      const res = await supabase.from('tipos_refaccion').update({ nombre:form.nombre.trim() }).eq('id', editing)
+      error = res.error
+    } else {
+      const res = await supabase.from('tipos_refaccion').insert({ nombre:form.nombre.trim() })
+      error = res.error
+    }
+    if (error) alert('Error: ' + error.message)
+    else { setModal(false); setEditing(null); setForm({nombre:''}); load() }
+    setSaving(false)
   }
 
   return (
@@ -302,8 +483,8 @@ function TabTipos() {
               <input style={inp} value={form.nombre} onChange={e=>setForm({nombre:e.target.value})} placeholder="Ej: casco bateria"/>
             </div>
             <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
-              <button onClick={()=>setModal(false)} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
-              <button onClick={guardar} style={btn()}>Guardar</button>
+              <button onClick={()=>{setModal(false);setEditing(null)}} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
+              <button onClick={guardar} disabled={saving} style={{...btn(), opacity:saving?0.7:1}}>{saving?'Guardando...':'Guardar'}</button>
             </div>
           </div>
         </div>
@@ -314,11 +495,13 @@ function TabTipos() {
 
 // ── TAB: SKUs ─────────────────────────────────────────────
 function TabSkus() {
-  const [skus,    setSkus]   = useState([])
-  const [tipos,   setTipos]  = useState([])
-  const [modal,   setModal]  = useState(false)
-  const [form,    setForm]   = useState({ codigo:'', tipo_id:'', precio:'' })
-  const [editing, setEditing]= useState(null)
+  const [skus,    setSkus]    = useState([])
+  const [tipos,   setTipos]   = useState([])
+  const [modal,   setModal]   = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [editing, setEditing] = useState(null)
+  const initForm = { codigo:'', tipo_id:'', precio:'', activo:true }
+  const [form, setForm] = useState(initForm)
 
   useEffect(()=>{ load() },[])
   async function load() {
@@ -329,21 +512,33 @@ function TabSkus() {
     setSkus(s??[]); setTipos(t??[])
   }
   function abrir(s=null) {
-    setForm({ codigo:s?.codigo??'', tipo_id:s?.tipo_id??'', precio:s?.precio??'', activo:s?.activo??true })
+    setForm(s
+      ? { codigo:s.codigo??'', tipo_id:s.tipo_id??'', precio:s.precio??'', activo:s.activo??true }
+      : initForm
+    )
     setEditing(s?.id??null); setModal(true)
   }
   async function guardar() {
     if (!form.codigo.trim()) { alert('El código es requerido'); return }
+    setSaving(true)
     const payload = { codigo:form.codigo.trim(), tipo_id:form.tipo_id||null, precio:parseFloat(form.precio)||null, activo:form.activo!==false }
-    if (editing) await supabase.from('skus').update(payload).eq('id', editing)
-    else await supabase.from('skus').insert(payload)
-    setModal(false); load()
+    let error
+    if (editing) {
+      const res = await supabase.from('skus').update(payload).eq('id', editing)
+      error = res.error
+    } else {
+      const res = await supabase.from('skus').insert(payload)
+      error = res.error
+    }
+    if (error) alert('Error: ' + error.message)
+    else { setModal(false); setEditing(null); setForm(initForm); load() }
+    setSaving(false)
   }
 
   return (
     <div>
       <div style={{display:'flex', justifyContent:'space-between', marginBottom:14}}>
-        <p style={{fontSize:13, color:'#888'}}>{skus.filter(s=>s.activo).length} SKUs activos</p>
+        <p style={{fontSize:13, color:'#888'}}>{skus.filter(s=>s.activo).length} SKUs activos · {skus.length} total</p>
         <button onClick={()=>abrir()} style={btn()}>+ Nuevo SKU</button>
       </div>
       <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
@@ -395,93 +590,8 @@ function TabSkus() {
               </label>
             </div>
             <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
-              <button onClick={()=>setModal(false)} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
-              <button onClick={guardar} style={btn()}>Guardar</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ── TAB: PROVEEDORES ──────────────────────────────────────
-function TabProveedores() {
-  const [proveedores, setProveedores] = useState([])
-  const [modal,   setModal]   = useState(false)
-  const [form,    setForm]    = useState({ nombre:'', contacto:'', email:'' })
-  const [editing, setEditing] = useState(null)
-
-  useEffect(()=>{ load() },[])
-  async function load() {
-    const { data } = await supabase.from('proveedores').select('*').order('nombre')
-    setProveedores(data??[])
-  }
-  function abrir(p=null) {
-    setForm({ nombre:p?.nombre??'', contacto:p?.contacto??'', email:p?.email??'', activo:p?.activo??true })
-    setEditing(p?.id??null); setModal(true)
-  }
-  async function guardar() {
-    if (!form.nombre.trim()) { alert('El nombre es requerido'); return }
-    if (editing) await supabase.from('proveedores').update(form).eq('id', editing)
-    else await supabase.from('proveedores').insert(form)
-    setModal(false); load()
-  }
-
-  return (
-    <div>
-      <div style={{display:'flex', justifyContent:'space-between', marginBottom:14}}>
-        <p style={{fontSize:13, color:'#888'}}>{proveedores.filter(p=>p.activo).length} proveedores activos</p>
-        <button onClick={()=>abrir()} style={btn()}>+ Nuevo proveedor</button>
-      </div>
-      <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
-        <thead><tr>
-          <th style={th}>Nombre</th><th style={th}>Contacto</th><th style={th}>Email</th><th style={th}>Estado</th><th style={th}>Acciones</th>
-        </tr></thead>
-        <tbody>
-          {proveedores.map(p=>(
-            <tr key={p.id} style={{opacity:p.activo?1:0.5}}>
-              <td style={{...td, fontWeight:500}}>{p.nombre}</td>
-              <td style={td}>{p.contacto??<span style={{color:'#ccc'}}>—</span>}</td>
-              <td style={td}>{p.email??<span style={{color:'#ccc'}}>—</span>}</td>
-              <td style={td}>
-                <span style={{padding:'1px 7px', borderRadius:20, fontSize:10, fontWeight:500,
-                  background:p.activo?'#EAF3DE':'#F1EFE8', color:p.activo?'#166534':'#888'}}>
-                  {p.activo?'Activo':'Inactivo'}
-                </span>
-              </td>
-              <td style={td}><button onClick={()=>abrir(p)} style={{...btn(), padding:'3px 10px', fontSize:10}}>Editar</button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {modal && (
-        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
-          <div style={{background:'white', borderRadius:12, padding:22, width:'100%', maxWidth:400}}>
-            <p style={{fontWeight:500, marginBottom:14}}>{editing?'Editar proveedor':'Nuevo proveedor'}</p>
-            <div style={{marginBottom:10}}>
-              <label style={lbl}>Nombre *</label>
-              <input style={inp} value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))}/>
-            </div>
-            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10}}>
-              <div>
-                <label style={lbl}>Contacto</label>
-                <input style={inp} value={form.contacto} onChange={e=>setForm(f=>({...f,contacto:e.target.value}))}/>
-              </div>
-              <div>
-                <label style={lbl}>Email</label>
-                <input type="email" style={inp} value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/>
-              </div>
-            </div>
-            <div style={{marginBottom:14}}>
-              <label style={{...lbl, display:'flex', alignItems:'center', gap:7, cursor:'pointer'}}>
-                <input type="checkbox" checked={form.activo!==false} onChange={e=>setForm(f=>({...f,activo:e.target.checked}))}/>
-                Proveedor activo
-              </label>
-            </div>
-            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
-              <button onClick={()=>setModal(false)} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
-              <button onClick={guardar} style={btn()}>Guardar</button>
+              <button onClick={()=>{setModal(false);setEditing(null);setForm(initForm)}} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
+              <button onClick={guardar} disabled={saving} style={{...btn(), opacity:saving?0.7:1}}>{saving?'Guardando...':'Guardar'}</button>
             </div>
           </div>
         </div>

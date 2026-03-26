@@ -238,6 +238,7 @@ export default function Pedidos() {
     setModalFactura(null); setUuidFact(''); load()
   }
 
+  const propuesta     = generarPropuesta()
   const totalModal    = itemsPedido.reduce((s,it) => s + it.cantidad * it.precio, 0)
   const manualesCount = itemsPedido.filter(it => it.esManual).length
   const provSelected  = proveedores.find(p => p.id === proveedorPed)
@@ -259,18 +260,20 @@ export default function Pedidos() {
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
             <div>
               <p style={{fontWeight:500, fontSize:13}}>Propuesta de pedido</p>
-              <p style={{fontSize:11, color:'#888', marginTop:2}}>SKUs con cobertura &lt; 2 semanas · asigna el proveedor al confirmar</p>
+              <p style={{fontSize:11, color:'#888', marginTop:2}}>SKUs con cobertura &lt; 2 semanas y rotación activa</p>
             </div>
             <button onClick={abrirModalPedido} style={btn()}>
-              Revisar y solicitar ({generarPropuesta().length} ítems recomendados)
+              Revisar y solicitar ({propuesta.length} ítems)
             </button>
           </div>
-          <div style={{display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end'}}>
+
+          {/* Filtros */}
+          <div style={{display:'flex', gap:10, marginBottom:12, flexWrap:'wrap', alignItems:'flex-end'}}>
             <div>
               <div style={{fontSize:10, color:'#888', marginBottom:3}}>Taller</div>
               <select value={fTallerProp} onChange={e=>setFTallerProp(e.target.value)}
                 style={{padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:160}}>
-                <option value="">Todos</option>
+                <option value="">Todos los talleres</option>
                 {talleres.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
               </select>
             </div>
@@ -278,15 +281,52 @@ export default function Pedidos() {
               <div style={{fontSize:10, color:'#888', marginBottom:3}}>SKU</div>
               <select value={fSkuProp} onChange={e=>setFSkuProp(e.target.value)}
                 style={{padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:140}}>
-                <option value="">Todos</option>
+                <option value="">Todos los SKUs</option>
                 {skus.map(s=><option key={s.id} value={s.id}>{s.codigo}</option>)}
               </select>
             </div>
             {(fTallerProp||fSkuProp) && (
               <button onClick={()=>{setFTallerProp('');setFSkuProp('')}}
-                style={{padding:'5px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, background:'white', cursor:'pointer'}}>Limpiar</button>
+                style={{padding:'5px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, background:'white', cursor:'pointer'}}>
+                Limpiar
+              </button>
             )}
           </div>
+
+          {/* Tabla de propuesta visible en la página */}
+          {propuesta.length > 0 ? (
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+                <thead><tr>
+                  {['Taller','SKU','Stock actual','Rot/sem','Cobertura','Cant. sugerida','Precio unit.','Subtotal'].map(h=>(
+                    <th key={h} style={th}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {propuesta.map((it,idx)=>(
+                    <tr key={idx} style={{background:idx%2===0?'white':'#fafafa'}}>
+                      <td style={td}>{it.taller_nom}</td>
+                      <td style={{...td, fontFamily:'monospace', fontSize:11, fontWeight:500}}>{it.sku_cod}</td>
+                      <td style={td}>{it.stock_actual}</td>
+                      <td style={td}>{it.rotacion.toFixed(1)}</td>
+                      <td style={{...td, color:'#A32D2D', fontWeight:500}}>{it.semanas} sem</td>
+                      <td style={{...td, fontWeight:500}}>{it.cantidad}</td>
+                      <td style={{...td, fontSize:11, color:'#666'}}>{formatMXN(it.precio/IVA)} s/IVA</td>
+                      <td style={{...td, fontWeight:500}}>{formatMXN(it.cantidad*it.precio)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{background:'#f5f5f3', borderTop:'2px solid #e0dfd8'}}>
+                    <td colSpan={7} style={{...td, fontWeight:500, textAlign:'right', color:'#555'}}>Total estimado c/IVA:</td>
+                    <td style={{...td, fontWeight:500, color:'#1a4f8a', fontSize:13}}>{formatMXN(propuesta.reduce((s,it)=>s+it.cantidad*it.precio,0))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{color:'#aaa', fontSize:12, padding:'12px 0', textAlign:'center'}}>
+              {fTallerProp||fSkuProp ? 'Sin ítems críticos con los filtros aplicados.' : '🎉 Sin SKUs en nivel crítico actualmente.'}
+            </p>
+          )}
         </div>
       )}
 

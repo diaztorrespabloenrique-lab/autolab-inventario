@@ -35,7 +35,8 @@ export default function Kardex() {
   const [talleres,    setTalleres]    = useState([])
   const [skus,        setSkus]        = useState([])
   const [proveedores, setProveedores] = useState([])
-  const [pedidosOC,   setPedidosOC]   = useState([]) // OCs aprobadas disponibles para vincular
+  const [pedidosOC,   setPedidosOC]   = useState([]) // OCs aprobadas/enviadas disponibles
+  const [ocCompletas,  setOcCompletas]  = useState(new Set()) // IDs de OCs con recepción completa
   const [loading,     setLoading]     = useState(true)
   const [modal,       setModal]       = useState(false)
   const [saving,      setSaving]      = useState(false)
@@ -61,7 +62,7 @@ export default function Kardex() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const [{ data:m, error:mErr }, { data:t }, { data:s }, { data:p }, { data:ocs }] = await Promise.all([
+    const [{ data:m, error:mErr }, { data:t }, { data:s }, { data:p }, { data:ocs }, { data:recOC }, { data:preciosCd }] = await Promise.all([
       supabase.from('movimientos')
         .select(`
           id, taller_id, sku_id, tipo, cantidad, notas, fecha, origen,
@@ -80,11 +81,15 @@ export default function Kardex() {
       supabase.from('talleres').select('*').eq('activo',true).order('nombre'),
       supabase.from('skus').select('*, tipos_refaccion(nombre)').eq('activo',true).order('codigo'),
       supabase.from('proveedores').select('*').eq('activo',true).order('nombre'),
-      // OCs aprobadas o pendientes (todavía no completamente recibidas)
+      // OCs aprobadas/enviadas — excluiremos las completas al filtrar
       supabase.from('pedidos')
-        .select('id, numero_oc, proveedores(nombre)')
-        .in('estado', ['aprobado','pendiente'])
+        .select('id, numero_oc, items, proveedor_id, proveedores(nombre)')
+        .in('estado', ['aprobado','enviado'])
         .order('numero_oc', { ascending:false }),
+      // Recepción de OCs para excluir las completas
+      supabase.from('v_oc_recepcion').select('pedido_id, estado_recepcion'),
+      // Precios por ciudad para pre-llenar precio en entradas
+      supabase.from('precios_ciudad').select('sku_id, region, precio_iva'),
     ])
 
     if (mErr) console.error('Error movimientos:', mErr)
@@ -108,7 +113,24 @@ export default function Kardex() {
     setSkus(s ?? [])
     setProveedores(p ?? [])
     setPedidosOC(ocs ?? [])
+
+    // Cargar qué OCs están completamente recibidas para excluirlas del selector
+    const { data:recep } = await supabase
+      .from('v_oc_recepcion')
+      .select('pedido_id, estado_recepcion')
+      .eq('estado_recepcion', 'completo')
+    setOcCompletas(new Set((recep ?? []).map(r => r.pedido_id)))
+
     setLoading(false)
+  }
+
+  // Precio de lista para un SKU en la región del taller seleccionado
+  function getPrecioLista(sku_id) {
+    if (!form.taller_id) return ''
+    const taller = talleres.find(t => t.id === form.taller_id)
+    if (!taller) return ''
+    const pc = preciosCiudad.find(p => p.sku_id === sku_id && p.region === taller.region)
+    return pc ? pc.precio_iva : ''
   }
 
   function skusParaOrigen(origen) {
@@ -120,11 +142,22 @@ export default function Kardex() {
     return (parseFloat(form.precio_unitario)||0) * (parseInt(form.cantidad)||0)
   }
 
-  // Al seleccionar una OC, auto-llenar el proveedor
+  // Al seleccionar una OC, auto-llenar proveedor_id
   function onSelectOC(pedido_id) {
     setForm(f => {
       const oc = pedidosOC.find(p => p.id === pedido_id)
       return { ...f, pedido_id, proveedor_id: oc?.proveedor_id ?? f.proveedor_id }
+    })
+  }
+
+  // Filtrar OCs que contienen el taller+SKU seleccionado
+  function ocsFiltradas() {
+    // Excluir siempre las OCs con recepción completa
+    const disponibles = pedidosOC.filter(oc => !ocCompletas.has(oc.id))
+    if (!form.taller_id || !form.sku_id) return disponibles
+    return disponibles.filter(oc => {
+      const items = Array.isArray(oc.items) ? oc.items : []
+      return items.some(it => it.taller_id === form.taller_id && it.sku_id === form.sku_id)
     })
   }
 
@@ -495,7 +528,17 @@ export default function Kardex() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
               <div>
                 <label style={lbl}>Taller *</label>
-                <select style={inp} value={form.taller_id} onChange={e => setForm(f => ({ ...f, taller_id:e.target.value }))}>
+                <select style={inp} value={form.taller_id} onChange={e => {
+                  const newTallerId = e.target.value
+                  setForm(f => {
+                    if (f.tipo === 'entrada' && f.origen === 'compra' && f.sku_id) {
+                      const taller = talleres.find(t => t.id === newTallerId)
+                      const pc = taller ? preciosCiudad.find(p => p.sku_id === f.sku_id && p.region === taller.region) : null
+                      return { ...f, taller_id: newTallerId, precio_unitario: pc ? pc.precio_iva : f.precio_unitario }
+                    }
+                    return { ...f, taller_id: newTallerId }
+                  })
+                }}>
                   <option value="">Seleccionar...</option>
                   {talleres.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                 </select>
@@ -506,7 +549,11 @@ export default function Kardex() {
                     <span style={{ color:'#854F0B', fontSize:10, marginLeft:4 }}>(solo cascos)</span>
                   )}
                 </label>
-                <select style={inp} value={form.sku_id} onChange={e => setForm(f => ({ ...f, sku_id:e.target.value }))}>
+                <select style={inp} value={form.sku_id} onChange={e => {
+                  const newSkuId = e.target.value
+                  const precioLista = getPrecioLista(newSkuId)
+                  setForm(f => ({ ...f, sku_id:newSkuId, precio_unitario: f.tipo==='entrada' && f.origen==='compra' ? (precioLista || f.precio_unitario) : f.precio_unitario }))
+                }}>
                   <option value="">Seleccionar...</option>
                   {skusParaOrigen(form.tipo==='entrada' ? form.origen : '').map(s => (
                     <option key={s.id} value={s.id}>{s.codigo}</option>
@@ -554,12 +601,17 @@ export default function Kardex() {
                   <select style={{ ...inp, border: form.pedido_id?'1.5px solid #86EFAC':'0.5px solid #ccc' }}
                     value={form.pedido_id} onChange={e => onSelectOC(e.target.value)}>
                     <option value="">— Sin vincular a OC —</option>
-                    {pedidosOC.map(oc => (
+                    {(form.taller_id && form.sku_id ? ocsFiltradas() : pedidosOC).map(oc => (
                       <option key={oc.id} value={oc.id}>
                         OC-{oc.numero_oc} · {oc.proveedores?.nombre ?? ''}
                       </option>
                     ))}
                   </select>
+                  {form.taller_id && form.sku_id && ocsFiltradas().length === 0 && (
+                    <p style={{ fontSize:10, color:'#888', marginTop:3 }}>
+                      No hay OCs aprobadas/enviadas que incluyan este taller y SKU.
+                    </p>
+                  )}
                   {form.pedido_id && (
                     <p style={{ fontSize:10, color:'#166534', marginTop:3 }}>
                       ✅ Esta entrada quedará vinculada a la OC seleccionada para rastrear la recepción

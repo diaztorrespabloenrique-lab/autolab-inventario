@@ -29,6 +29,7 @@ export default function Pedidos() {
   const [skus,        setSkus]        = useState([])
   const [inv,         setInv]         = useState([])
   const [proveedores, setProveedores] = useState([])
+  const [preciosCd,   setPreciosCd]   = useState([])
   const [recepcion,   setRecepcion]   = useState({})
   const [loading,     setLoading]     = useState(true)
 
@@ -56,7 +57,7 @@ export default function Pedidos() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const [{ data:p }, { data:t }, { data:s }, { data:i }, { data:pr }] = await Promise.all([
+    const [{ data:p }, { data:t }, { data:s }, { data:i }, { data:pr }, { data:pcd }] = await Promise.all([
       supabase.from('pedidos')
         .select('*, talleres(nombre), proveedores(nombre,email), aprobador:aprobado_por(nombre)')
         .order('created_at', { ascending:false }),
@@ -64,9 +65,10 @@ export default function Pedidos() {
       supabase.from('skus').select('*, tipos_refaccion(nombre)').eq('activo',true).order('codigo'),
       supabase.from('v_inventario').select('*'),
       supabase.from('proveedores').select('*').eq('activo',true).order('nombre'),
+      supabase.from('precios_ciudad').select('sku_id, region, precio_iva'),
     ])
     setPedidos(p??[]); setTalleres(t??[]); setSkus(s??[])
-    setInv(i??[]); setProveedores(pr??[])
+    setInv(i??[]); setProveedores(pr??[]); setPreciosCd(pcd??[])
 
     // Cargar recepción: cuánto se recibió por OC
     const { data:rec } = await supabase.from('v_oc_recepcion').select('*')
@@ -88,10 +90,14 @@ export default function Pedidos() {
       const sku = skus.find(s => s.id === r.sku_id)
       if (!sku) return
       const cantPedir = Math.max(1, Math.round(r.rotacion * 4) - r.stock)
+      // Buscar precio por ciudad del taller
+      const tallerObj = talleres.find(t => t.id === r.taller_id)
+      const pcObj = tallerObj ? preciosCd.find(p => p.sku_id === r.sku_id && p.region === tallerObj.region) : null
+      const precio = pcObj?.precio_iva || sku.precio || 0
       items.push({
         taller_id:r.taller_id, taller_nom:r.taller,
         sku_id:r.sku_id, sku_cod:r.sku,
-        cantidad:cantPedir, precio:sku.precio||0,
+        cantidad:cantPedir, precio,
         stock_actual:r.stock, rotacion:r.rotacion,
         semanas:sem.toFixed(1), esManual:false,
       })
@@ -106,11 +112,16 @@ export default function Pedidos() {
     setModalPedido(true)
   }
 
-  function updateCantidad(idx, val) {
-    setItemsPedido(prev => prev.map((it,i) =>
-      i===idx ? {...it, cantidad: Math.max(0, parseInt(val)||0)} : it
-    ))
+  function updateItem(idx, field, val) {
+    setItemsPedido(prev => prev.map((it,i) => {
+      if (i !== idx) return it
+      if (field === 'cantidad') return {...it, cantidad: Math.max(0, parseInt(val)||0)}
+      if (field === 'precio')   return {...it, precio: parseFloat(val)||0}
+      return {...it, [field]: val}
+    }))
   }
+  // alias para compatibilidad
+  function updateCantidad(idx, val) { updateItem(idx, 'cantidad', val) }
   function removeItem(idx) {
     setItemsPedido(prev => prev.filter((_,i) => i!==idx))
   }
@@ -127,10 +138,13 @@ export default function Pedidos() {
       ))
     } else {
       const regInv = inv.find(r => r.taller_id===nuevoTaller && r.sku_id===nuevoSku)
+      const tallerManual = talleres.find(t => t.id === nuevoTaller)
+      const pcManual = tallerManual ? preciosCd.find(p => p.sku_id === nuevoSku && p.region === tallerManual.region) : null
+      const precioManual = pcManual?.precio_iva || sku.precio || 0
       setItemsPedido(prev => [...prev, {
         taller_id:nuevoTaller, taller_nom:taller.nombre,
         sku_id:nuevoSku, sku_cod:sku.codigo,
-        cantidad:parseInt(nuevaCant)||1, precio:sku.precio||0,
+        cantidad:parseInt(nuevaCant)||1, precio:precioManual,
         stock_actual:regInv?.stock??0, rotacion:regInv?.rotacion??0,
         semanas:regInv?.rotacion>0 ? (regInv.stock/regInv.rotacion).toFixed(1) : '—',
         esManual:true,
@@ -410,7 +424,7 @@ export default function Pedidos() {
                     {p.uuid_factura
                       ? <span style={{fontFamily:'monospace', fontSize:10}}>{p.uuid_factura.slice(0,12)}...</span>
                       : <span style={{color:'#ccc'}}>—</span>}
-                    {isAdmin && (
+                    {canWrite && (
                       <button onClick={()=>{setModalFactura(p);setUuidFact(p.uuid_factura||'')}}
                         style={{marginLeft:6, fontSize:10, padding:'1px 7px', border:'0.5px solid #ccc', borderRadius:5, cursor:'pointer', background:'white'}}>
                         {p.uuid_factura?'Editar':'Agregar'}
@@ -514,7 +528,14 @@ export default function Pedidos() {
                         onChange={e=>updateCantidad(idx,e.target.value)}
                         style={{...inp, width:70}}/>
                     </td>
-                    <td style={{...td, fontSize:11}}>{formatMXN(it.precio/IVA)} s/IVA</td>
+                    <td style={td}>
+                      <input type="number" min="0" step="0.01"
+                        value={it.precio}
+                        onChange={e=>updateItem(idx,'precio',e.target.value)}
+                        style={{...inp, width:90, fontSize:11}}
+                        title="Precio unitario c/IVA"/>
+                      <div style={{fontSize:9, color:'#888', marginTop:2}}>{formatMXN(it.precio/IVA)} s/IVA</div>
+                    </td>
                     <td style={{...td, fontWeight:500}}>{formatMXN(it.cantidad*it.precio)}</td>
                     <td style={td}>
                       <button onClick={()=>removeItem(idx)}

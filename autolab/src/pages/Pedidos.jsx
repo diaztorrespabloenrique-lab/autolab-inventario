@@ -29,6 +29,7 @@ export default function Pedidos() {
   const [skus,        setSkus]        = useState([])
   const [inv,         setInv]         = useState([])
   const [proveedores, setProveedores] = useState([])
+  const [recepcion,   setRecepcion]   = useState({})
   const [loading,     setLoading]     = useState(true)
 
   const [fTallerProp, setFTallerProp] = useState('')
@@ -66,6 +67,13 @@ export default function Pedidos() {
     ])
     setPedidos(p??[]); setTalleres(t??[]); setSkus(s??[])
     setInv(i??[]); setProveedores(pr??[])
+
+    // Cargar recepción: cuánto se recibió por OC
+    const { data:rec } = await supabase.from('v_oc_recepcion').select('*')
+    const recMap = {}
+    ;(rec ?? []).forEach(r => { recMap[r.pedido_id] = r })
+    setRecepcion(recMap)
+
     setLoading(false)
   }
 
@@ -334,7 +342,7 @@ export default function Pedidos() {
       <div style={{background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden'}}>
         <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
           <thead><tr>
-            {['OC #','Fecha','Proveedor','Estado','Ítems','Total','UUID Factura','Aprobado por','Acciones'].map(h=>(
+            {['OC #','Fecha','Proveedor','Estado','Recepción','Ítems','Total','UUID Factura','Aprobado por','Acciones'].map(h=>(
               <th key={h} style={th}>{h}</th>
             ))}
           </tr></thead>
@@ -357,6 +365,23 @@ export default function Pedidos() {
                     <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:ecfg.bg, color:ecfg.color}}>
                       {ecfg.label}
                     </span>
+                  </td>
+                  <td style={td}>
+                    {(()=>{
+                      const r = recepcion[p.id]
+                      if (!r || !r.unidades_pedidas) return <span style={{color:'#ccc', fontSize:11}}>—</span>
+                      const color = r.estado_recepcion==='completo' ? '#166534'
+                        : r.estado_recepcion==='parcial' ? '#854D0E' : '#A32D2D'
+                      const bg    = r.estado_recepcion==='completo' ? '#DCFCE7'
+                        : r.estado_recepcion==='parcial' ? '#FEF9C3' : '#FEE2E2'
+                      const lbl   = r.estado_recepcion==='completo' ? '✅ Completo'
+                        : r.estado_recepcion==='parcial' ? `⚠ ${r.unidades_recibidas}/${r.unidades_pedidas}` : `❌ 0/${r.unidades_pedidas}`
+                      return (
+                        <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:bg, color, whiteSpace:'nowrap'}}>
+                          {lbl}
+                        </span>
+                      )
+                    })()}
                   </td>
                   <td style={td}>
                     <button onClick={()=>setExpandido(expandido===p.id?null:p.id)}
@@ -639,10 +664,13 @@ export default function Pedidos() {
                 Cerrar
               </button>
               {modalEmail.pedido.proveedores?.email && (
-                <a href={`mailto:${modalEmail.pedido.proveedores.email}?subject=Orden de Compra OC-${modalEmail.pedido.numero_oc} — Autolab MX`}
-                  style={{...btn('#1a4f8a'), textDecoration:'none', padding:'6px 14px', fontSize:12}}>
-                  Abrir en correo ↗
-                </a>
+                <button onClick={()=> {
+                  const to  = encodeURIComponent(modalEmail.pedido.proveedores.email)
+                  const sub = encodeURIComponent(`Orden de Compra OC-${modalEmail.pedido.numero_oc} — Autolab MX`)
+                  window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${sub}`, '_blank')
+                }} style={{...btn('#1a4f8a'), padding:'6px 14px', fontSize:12}}>
+                  Abrir en Gmail ↗
+                </button>
               )}
             </div>
           </div>

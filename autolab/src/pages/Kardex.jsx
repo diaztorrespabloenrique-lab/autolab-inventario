@@ -13,14 +13,13 @@ const ESTADO_APR_CFG = {
   aprobado:  { label:'✅ Aprobado',  bg:'#DCFCE7', color:'#166534' },
   rechazado: { label:'❌ Rechazado', bg:'#FEE2E2', color:'#991B1B' },
 }
-
 const ths = { padding:'7px 10px', fontWeight:500, fontSize:11, color:'#666', borderBottom:'0.5px solid #e0dfd8', background:'#f5f5f3', whiteSpace:'nowrap' }
 const tds = { padding:'7px 10px', borderBottom:'0.5px solid #f0efe8', fontSize:12, verticalAlign:'middle' }
 const inp = { width:'100%', padding:'6px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12 }
 const lbl = { fontSize:11, color:'#666', display:'block', marginBottom:3 }
 
 const ORIGENES_ENTRADA = [
-  { k:'compra',     l:'Compra',                   desc:'Compra a proveedor con factura' },
+  { k:'compra',     l:'Compra',                   desc:'Entrada vinculada a una OC' },
   { k:'movimiento', l:'Movimiento entre talleres', desc:'Transferencia desde otro taller' },
   { k:'garantia',   l:'Garantía',                 desc:'Refacción de garantía del proveedor' },
   { k:'cascos',     l:'Cascos (recuperación)',     desc:'Casco recuperado al cambiar batería' },
@@ -36,54 +35,60 @@ export default function Kardex() {
   const [talleres,    setTalleres]    = useState([])
   const [skus,        setSkus]        = useState([])
   const [proveedores, setProveedores] = useState([])
+  const [pedidosOC,   setPedidosOC]   = useState([]) // OCs aprobadas disponibles para vincular
   const [loading,     setLoading]     = useState(true)
   const [modal,       setModal]       = useState(false)
   const [saving,      setSaving]      = useState(false)
-  const [editUUID,    setEditUUID]    = useState(null)
+  const [editUUID,    setEditUUID]    = useState(null) // solo para entradas antiguas
   const [confirmDel,  setConfirmDel]  = useState(null)
-  const [confirmApr,  setConfirmApr]  = useState(null) // {mov, accion: 'aprobado'|'rechazado'}
+  const [confirmApr,  setConfirmApr]  = useState(null)
 
   // Filtros
   const [fTaller,    setFTaller]    = useState('')
   const [fProveedor, setFProveedor] = useState('')
   const [fTipo,      setFTipo]      = useState('')
   const [fOrigen,    setFOrigen]    = useState('')
-  const [fPendiente, setFPendiente] = useState(false) // atajo para ver solo pendientes
+  const [fPendiente, setFPendiente] = useState(false)
 
   const initForm = {
     taller_id:'', sku_id:'', tipo:'salida', cantidad:'',
     origen:'compra', notas:'', proveedor_id:'', precio_unitario:'',
-    uuid_factura:'', taller_origen_id:'', marca:'', placa:'',
-    es_garantia:false, appointment_id:'',
+    taller_origen_id:'', marca:'', placa:'', es_garantia:false,
+    appointment_id:'', pedido_id:'',
   }
   const [form, setForm] = useState(initForm)
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const [{ data:m, error:mErr }, { data:t }, { data:s }, { data:p }] = await Promise.all([
+    const [{ data:m, error:mErr }, { data:t }, { data:s }, { data:p }, { data:ocs }] = await Promise.all([
       supabase.from('movimientos')
         .select(`
           id, taller_id, sku_id, tipo, cantidad, notas, fecha, origen,
           marca, placa, es_garantia, precio_unitario, precio_total,
           uuid_factura, usuario_id, proveedor_id, taller_origen_id,
           appointment_id, fuente, estado_aprobacion, aprobado_por,
-          created_at,
+          pedido_id, created_at,
           talleres!movimientos_taller_id_fkey(nombre, region),
           skus(codigo),
           proveedores(nombre),
-          taller_origen:talleres!movimientos_taller_origen_id_fkey(nombre)
+          taller_origen:talleres!movimientos_taller_origen_id_fkey(nombre),
+          pedidos(numero_oc)
         `)
         .order('created_at', { ascending:false })
         .limit(300),
       supabase.from('talleres').select('*').eq('activo',true).order('nombre'),
       supabase.from('skus').select('*, tipos_refaccion(nombre)').eq('activo',true).order('codigo'),
       supabase.from('proveedores').select('*').eq('activo',true).order('nombre'),
+      // OCs aprobadas o pendientes (todavía no completamente recibidas)
+      supabase.from('pedidos')
+        .select('id, numero_oc, proveedores(nombre)')
+        .in('estado', ['aprobado','pendiente'])
+        .order('numero_oc', { ascending:false }),
     ])
 
     if (mErr) console.error('Error movimientos:', mErr)
 
-    // Cargar nombres de usuarios por separado
     let movsConNombre = m ?? []
     if (movsConNombre.length > 0) {
       const userIds = [...new Set(movsConNombre.map(x => x.usuario_id).filter(Boolean))]
@@ -102,6 +107,7 @@ export default function Kardex() {
     setTalleres(t ?? [])
     setSkus(s ?? [])
     setProveedores(p ?? [])
+    setPedidosOC(ocs ?? [])
     setLoading(false)
   }
 
@@ -114,7 +120,14 @@ export default function Kardex() {
     return (parseFloat(form.precio_unitario)||0) * (parseInt(form.cantidad)||0)
   }
 
-  // Filtros aplicados
+  // Al seleccionar una OC, auto-llenar el proveedor
+  function onSelectOC(pedido_id) {
+    setForm(f => {
+      const oc = pedidosOC.find(p => p.id === pedido_id)
+      return { ...f, pedido_id, proveedor_id: oc?.proveedor_id ?? f.proveedor_id }
+    })
+  }
+
   const movsFiltrados = movs.filter(m => {
     if (fTaller    && m.taller_id    !== fTaller)    return false
     if (fProveedor && m.proveedor_id !== fProveedor) return false
@@ -147,14 +160,14 @@ export default function Kardex() {
       es_garantia: form.tipo === 'salida' ? form.es_garantia : false,
       fuente:      'manual',
       estado_aprobacion: 'aprobado',
-      // appointment_id solo para salidas manuales no garantía ni movimiento
-      appointment_id: (form.tipo === 'salida' && !form.es_garantia && form.appointment_id.trim())
+      appointment_id: (form.tipo==='salida' && !form.es_garantia && form.appointment_id.trim())
         ? form.appointment_id.trim() : null,
+      // Entrada de compra: vincular OC y proveedor, sin UUID
       ...(form.tipo === 'entrada' && form.origen === 'compra' && {
         proveedor_id:    form.proveedor_id || null,
         precio_unitario: parseFloat(form.precio_unitario) || null,
         precio_total:    totalCalc() || null,
-        uuid_factura:    form.uuid_factura.trim() || null,
+        pedido_id:       form.pedido_id || null,
       }),
       ...(form.tipo === 'entrada' && form.origen === 'movimiento' && {
         taller_origen_id: form.taller_origen_id || null,
@@ -179,12 +192,6 @@ export default function Kardex() {
   async function handleDelete(id) {
     await supabase.from('movimientos').delete().eq('id', id)
     setConfirmDel(null); load()
-  }
-
-  async function handleSaveUUID() {
-    if (!editUUID) return
-    await supabase.from('movimientos').update({ uuid_factura: editUUID.uuid }).eq('id', editUUID.id)
-    setEditUUID(null); load()
   }
 
   if (loading) return <div style={{ padding:20, color:'#aaa' }}>Cargando...</div>
@@ -215,7 +222,6 @@ export default function Kardex() {
       {/* ── Filtros ── */}
       <div style={{ background:'white', border:'0.5px solid #e0dfd8', borderRadius:10,
         padding:'10px 14px', marginBottom:14, display:'flex', gap:10, flexWrap:'wrap', alignItems:'flex-end' }}>
-
         <div>
           <div style={{ fontSize:10, color:'#888', fontWeight:500, marginBottom:3 }}>Taller</div>
           <select value={fTaller} onChange={e=>setFTaller(e.target.value)}
@@ -224,7 +230,6 @@ export default function Kardex() {
             {talleres.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
           </select>
         </div>
-
         <div>
           <div style={{ fontSize:10, color:'#888', fontWeight:500, marginBottom:3 }}>Proveedor</div>
           <select value={fProveedor} onChange={e=>setFProveedor(e.target.value)}
@@ -233,7 +238,6 @@ export default function Kardex() {
             {proveedores.map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
           </select>
         </div>
-
         <div>
           <div style={{ fontSize:10, color:'#888', fontWeight:500, marginBottom:3 }}>Tipo</div>
           <select value={fTipo} onChange={e=>setFTipo(e.target.value)}
@@ -244,7 +248,6 @@ export default function Kardex() {
             <option value="ajuste">● Ajuste</option>
           </select>
         </div>
-
         <div>
           <div style={{ fontSize:10, color:'#888', fontWeight:500, marginBottom:3 }}>Origen</div>
           <select value={fOrigen} onChange={e=>setFOrigen(e.target.value)}
@@ -256,8 +259,6 @@ export default function Kardex() {
             <option value="cascos">Cascos</option>
           </select>
         </div>
-
-        {/* Atajo para ver pendientes del sistema */}
         {isAdmin && pendientesCount > 0 && (
           <button onClick={() => setFPendiente(p=>!p)}
             style={{ padding:'5px 12px', borderRadius:7, fontSize:11, cursor:'pointer', fontWeight:500,
@@ -266,15 +267,13 @@ export default function Kardex() {
             ⏳ {fPendiente?'Mostrando':'Ver'} pendientes ({pendientesCount})
           </button>
         )}
-
         <button onClick={() => { setFTaller(''); setFProveedor(''); setFTipo(''); setFOrigen(''); setFPendiente(false) }}
           style={{ padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, background:'white', cursor:'pointer', alignSelf:'flex-end' }}>
           Limpiar
         </button>
-
         {(fTaller||fProveedor||fTipo||fOrigen||fPendiente) && (
           <span style={{ fontSize:11, color:'#185FA5', alignSelf:'flex-end', marginLeft:'auto' }}>
-            {movsFiltrados.length} de {movs.length} registros
+            {movsFiltrados.length} de {movs.length}
           </span>
         )}
       </div>
@@ -285,10 +284,9 @@ export default function Kardex() {
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
             <thead>
               <tr>
-                {[
-                  'Fecha','Tipo','Fuente','Origen','Taller','Ciudad','SKU','Qty',
-                  'Appt. ID','Marca','Placa / Info','Proveedor','P. Unit.','Total',
-                  'UUID Factura','Estado','Registró',
+                {['Fecha','Tipo','Fuente','Origen','Taller','Ciudad','SKU','Qty',
+                  'OC vinculada','Appt. ID','Marca','Placa / Info','Proveedor',
+                  'P. Unit.','Total','Estado','Registró',
                   ...(isAdmin?['Acc.']:[])
                 ].map(h=>(
                   <th key={h} style={ths}>{h}</th>
@@ -306,27 +304,22 @@ export default function Kardex() {
                 const rc   = REGIONES[m.talleres?.region] ?? {}
                 const oc   = ORIGEN_CFG[m.origen] ?? null
                 const esSistema = m.fuente === 'sistema'
-                const sinUUID = m.tipo==='entrada' && m.origen==='compra' && !m.uuid_factura
                 const eapcfg = esSistema ? (ESTADO_APR_CFG[m.estado_aprobacion] ?? ESTADO_APR_CFG.pendiente) : null
 
                 return (
                   <tr key={m.id} style={{ background: esSistema && m.estado_aprobacion==='pendiente' ? '#FFFEF0' : 'white' }}>
                     <td style={tds}>{m.fecha}</td>
                     <td style={tds}><span style={{ color:tc.color, fontWeight:500 }}>{tc.icon} {m.tipo}</span></td>
-
-                    {/* Fuente: manual no muestra nada, sistema muestra badge */}
                     <td style={tds}>
                       {esSistema
                         ? <span style={{ fontSize:10, padding:'1px 6px', borderRadius:20, background:'#E8EAFF', color:'#3730A3', fontWeight:500 }}>Sistema</span>
                         : <span style={{ color:'#ccc', fontSize:10 }}>—</span>}
                     </td>
-
                     <td style={tds}>
                       {oc
                         ? <span style={{ fontSize:10, padding:'1px 6px', borderRadius:20, background:oc.bg, color:oc.color, fontWeight:500 }}>{oc.label}</span>
                         : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
-
                     <td style={{ ...tds, fontWeight:500 }}>
                       {m.talleres?.nombre}
                       {m.origen==='movimiento' && m.taller_origen?.nombre && (
@@ -339,6 +332,15 @@ export default function Kardex() {
                       {m.tipo==='entrada'?'+':m.tipo==='salida'?'-':''}{m.cantidad}
                     </td>
 
+                    {/* OC vinculada */}
+                    <td style={tds}>
+                      {m.pedidos?.numero_oc
+                        ? <span style={{ fontSize:11, fontWeight:500, color:'#1a4f8a', background:'#E6F1FB', padding:'2px 8px', borderRadius:20 }}>
+                            OC-{m.pedidos.numero_oc}
+                          </span>
+                        : <span style={{ color:'#ccc' }}>—</span>}
+                    </td>
+
                     {/* Appointment ID */}
                     <td style={tds}>
                       {m.appointment_id
@@ -349,7 +351,6 @@ export default function Kardex() {
                     </td>
 
                     <td style={{ ...tds, fontSize:11 }}>{m.marca || <span style={{ color:'#ccc' }}>—</span>}</td>
-
                     <td style={tds}>
                       {m.tipo==='salida'
                         ? m.es_garantia
@@ -361,7 +362,6 @@ export default function Kardex() {
                           ? <span style={{ fontSize:10, color:'#5F5E5A' }}>recuperación</span>
                           : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
-
                     <td style={tds}>{m.proveedores?.nombre ?? <span style={{ color:'#ccc' }}>—</span>}</td>
                     <td style={{ ...tds, textAlign:'right' }}>
                       {m.precio_unitario ? `$${Number(m.precio_unitario).toLocaleString('es-MX')}` : <span style={{ color:'#ccc' }}>—</span>}
@@ -370,31 +370,7 @@ export default function Kardex() {
                       {m.precio_total ? `$${Number(m.precio_total).toLocaleString('es-MX')}` : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
 
-                    <td style={tds}>
-                      {sinUUID ? (
-                        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-                          <span style={{ background:'#FCEBEB', color:'#791F1F', fontSize:10, padding:'2px 7px', borderRadius:20, fontWeight:500 }}>⚠ Falta UUID</span>
-                          {isAdmin && (
-                            <button onClick={() => setEditUUID({ id:m.id, uuid:'' })}
-                              style={{ fontSize:10, padding:'2px 8px', border:'0.5px solid #ccc', borderRadius:6, cursor:'pointer', background:'white' }}>
-                              Agregar
-                            </button>
-                          )}
-                        </div>
-                      ) : m.uuid_factura ? (
-                        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-                          <span style={{ fontFamily:'monospace', fontSize:10 }}>{m.uuid_factura.slice(0,12)}...</span>
-                          {isAdmin && (
-                            <button onClick={() => setEditUUID({ id:m.id, uuid:m.uuid_factura })}
-                              style={{ fontSize:10, padding:'2px 7px', border:'0.5px solid #ccc', borderRadius:6, cursor:'pointer', background:'white' }}>
-                              Editar
-                            </button>
-                          )}
-                        </div>
-                      ) : <span style={{ color:'#ccc' }}>—</span>}
-                    </td>
-
-                    {/* Estado aprobación — SOLO para movimientos del sistema */}
+                    {/* Estado aprobación — solo sistema */}
                     <td style={tds}>
                       {eapcfg ? (
                         <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
@@ -420,7 +396,6 @@ export default function Kardex() {
                     </td>
 
                     <td style={{ ...tds, color:'#aaa', fontSize:11 }}>{m.nombre_usuario ?? '—'}</td>
-
                     {isAdmin && (
                       <td style={tds}>
                         <button onClick={() => setConfirmDel(m)}
@@ -440,7 +415,7 @@ export default function Kardex() {
       {/* ── Modal nuevo movimiento ── */}
       {modal && canWrite && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
-          <div style={{ background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:510, maxHeight:'92vh', overflowY:'auto' }}>
+          <div style={{ background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:520, maxHeight:'92vh', overflowY:'auto' }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
               <p style={{ fontWeight:500 }}>Nuevo movimiento</p>
               <button onClick={() => { setModal(false); setForm(initForm) }}
@@ -465,7 +440,7 @@ export default function Kardex() {
                 <div style={{ fontSize:11, color:'#666', marginBottom:6, fontWeight:500 }}>Origen de la entrada *</div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
                   {ORIGENES_ENTRADA.map(({ k, l, desc }) => (
-                    <button key={k} onClick={() => setForm(f => ({ ...f, origen:k, sku_id:'' }))}
+                    <button key={k} onClick={() => setForm(f => ({ ...f, origen:k, sku_id:'', pedido_id:'' }))}
                       style={{ padding:'8px 10px', borderRadius:8, fontSize:11, cursor:'pointer', textAlign:'left',
                         border:`1.5px solid ${form.origen===k?'#1a4f8a':'#e0dfd8'}`,
                         background:form.origen===k?'#E6F1FB':'white', color:form.origen===k?'#0C447C':'#444' }}>
@@ -476,7 +451,7 @@ export default function Kardex() {
                 </div>
                 {form.origen === 'cascos' && (
                   <div style={{ marginTop:8, background:'#F1EFE8', borderRadius:7, padding:'7px 10px', fontSize:11, color:'#5F5E5A' }}>
-                    Solo se muestran SKUs de tipo <strong>casco bateria</strong>. No requiere factura ni UUID.
+                    Solo SKUs de tipo <strong>casco bateria</strong>. No requiere OC ni precio.
                   </div>
                 )}
               </div>
@@ -493,29 +468,23 @@ export default function Kardex() {
                   <div>
                     <span style={{ fontWeight:500, fontSize:12, color:form.es_garantia?'#633806':'#444' }}>Salida de garantía</span>
                     <div style={{ fontSize:10, color:'#888', marginTop:1 }}>
-                      {form.es_garantia ? 'Proveedor recoge la pieza — sin placa ni appointment' : 'Marca si el proveedor está recogiendo una garantía'}
+                      {form.es_garantia ? 'Proveedor recoge la pieza — sin placa' : 'Marca si el proveedor recoge una garantía'}
                     </div>
                   </div>
                 </label>
-
                 {!form.es_garantia && (
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                     <div>
-                      <label style={lbl}>Placa del vehículo *</label>
+                      <label style={lbl}>Placa *</label>
                       <input style={{ ...inp, textTransform:'uppercase' }} value={form.placa}
                         onChange={e => setForm(f => ({ ...f, placa:e.target.value.toUpperCase() }))}
                         placeholder="ej. ABC-123-D" />
-                      <p style={{ fontSize:10, color:'#888', marginTop:3 }}>Obligatorio para salidas normales</p>
                     </div>
                     <div>
-                      <label style={lbl}>
-                        Appointment ID
-                        <span style={{ color:'#aaa', fontSize:10, marginLeft:4 }}>(opcional)</span>
-                      </label>
+                      <label style={lbl}>Appointment ID <span style={{ color:'#aaa', fontSize:10 }}>(opcional)</span></label>
                       <input style={inp} value={form.appointment_id}
                         onChange={e => setForm(f => ({ ...f, appointment_id:e.target.value }))}
                         placeholder="ej. APT-2026-03-25-78432" />
-                      <p style={{ fontSize:10, color:'#888', marginTop:3 }}>Para rastrear el uso en el sistema del taller</p>
                     </div>
                   </div>
                 )}
@@ -572,9 +541,32 @@ export default function Kardex() {
               </div>
             )}
 
+            {/* ── ENTRADA COMPRA: OC + proveedor + precio — SIN UUID ── */}
             {form.tipo==='entrada' && form.origen==='compra' && (
               <div style={{ background:'#f9f9f7', border:'0.5px solid #e0dfd8', borderRadius:9, padding:12, marginBottom:10 }}>
-                <p style={{ fontSize:11, fontWeight:500, marginBottom:10 }}>Datos de compra</p>
+                <p style={{ fontSize:11, fontWeight:500, marginBottom:10 }}>Datos de la entrada</p>
+
+                {/* Selector de OC */}
+                <div style={{ marginBottom:10 }}>
+                  <label style={lbl}>
+                    Orden de Compra <span style={{ color:'#aaa', fontSize:10 }}>(opcional — vincula esta entrada a una OC)</span>
+                  </label>
+                  <select style={{ ...inp, border: form.pedido_id?'1.5px solid #86EFAC':'0.5px solid #ccc' }}
+                    value={form.pedido_id} onChange={e => onSelectOC(e.target.value)}>
+                    <option value="">— Sin vincular a OC —</option>
+                    {pedidosOC.map(oc => (
+                      <option key={oc.id} value={oc.id}>
+                        OC-{oc.numero_oc} · {oc.proveedores?.nombre ?? ''}
+                      </option>
+                    ))}
+                  </select>
+                  {form.pedido_id && (
+                    <p style={{ fontSize:10, color:'#166534', marginTop:3 }}>
+                      ✅ Esta entrada quedará vinculada a la OC seleccionada para rastrear la recepción
+                    </p>
+                  )}
+                </div>
+
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
                   <div>
                     <label style={lbl}>Proveedor *</label>
@@ -590,22 +582,17 @@ export default function Kardex() {
                       onChange={e => setForm(f => ({ ...f, precio_unitario:e.target.value }))} />
                   </div>
                 </div>
+
                 {form.precio_unitario && form.cantidad && (
-                  <div style={{ background:'#EAF3DE', borderRadius:7, padding:'7px 10px', marginBottom:10, fontSize:12 }}>
+                  <div style={{ background:'#EAF3DE', borderRadius:7, padding:'7px 10px', fontSize:12 }}>
                     <span style={{ color:'#3B6D11', fontWeight:500 }}>
                       Total: ${totalCalc().toLocaleString('es-MX')} MXN
                     </span>
+                    <span style={{ color:'#888', fontSize:10, marginLeft:8 }}>
+                      ({form.cantidad} × ${parseFloat(form.precio_unitario||0).toLocaleString('es-MX')})
+                    </span>
                   </div>
                 )}
-                <div>
-                  <label style={lbl}>UUID de factura <span style={{ color:'#aaa' }}>(opcional)</span></label>
-                  <input type="text" style={{ ...inp, fontFamily:'monospace', fontSize:11 }}
-                    value={form.uuid_factura} onChange={e => setForm(f => ({ ...f, uuid_factura:e.target.value }))}
-                    placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" />
-                  {!form.uuid_factura && (
-                    <p style={{ fontSize:10, color:'#E24B4A', marginTop:3 }}>⚠ Se marcará como pendiente hasta registrarlo</p>
-                  )}
-                </div>
               </div>
             )}
 
@@ -627,28 +614,28 @@ export default function Kardex() {
         </div>
       )}
 
-      {/* ── Modal aprobar/rechazar movimiento del sistema ── */}
+      {/* ── Modal aprobar/rechazar sistema ── */}
       {confirmApr && isAdmin && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
           <div style={{ background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:400 }}>
             <p style={{ fontWeight:500, marginBottom:8 }}>
-              {confirmApr.accion === 'aprobado' ? '✅ Aprobar' : '❌ Rechazar'} movimiento del sistema
+              {confirmApr.accion==='aprobado'?'✅ Aprobar':'❌ Rechazar'} movimiento del sistema
             </p>
             <p style={{ fontSize:12, color:'#888', marginBottom:14 }}>
-              Salida · {confirmApr.mov.skus?.codigo} · {confirmApr.mov.talleres?.nombre} · {confirmApr.mov.fecha}
+              {confirmApr.mov.skus?.codigo} · {confirmApr.mov.talleres?.nombre} · {confirmApr.mov.fecha}
               {confirmApr.mov.appointment_id && (
                 <span style={{ display:'block', fontFamily:'monospace', fontSize:11, marginTop:4 }}>
                   Appt: {confirmApr.mov.appointment_id}
                 </span>
               )}
             </p>
-            {confirmApr.accion === 'aprobado' ? (
+            {confirmApr.accion==='aprobado' ? (
               <div style={{ background:'#EAF3DE', borderRadius:7, padding:'8px 10px', fontSize:11, color:'#166534', marginBottom:16 }}>
-                ✅ Al aprobar, se descontará <strong>{confirmApr.mov.cantidad} unidad{confirmApr.mov.cantidad>1?'es':''}</strong> del inventario del taller.
+                ✅ Se descontarán <strong>{confirmApr.mov.cantidad} unidad{confirmApr.mov.cantidad>1?'es':''}</strong> del inventario.
               </div>
             ) : (
               <div style={{ background:'#FEE2E2', borderRadius:7, padding:'8px 10px', fontSize:11, color:'#991B1B', marginBottom:16 }}>
-                ❌ Al rechazar, el movimiento quedará cancelado y el inventario no cambia.
+                ❌ El inventario no cambiará.
               </div>
             )}
             <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
@@ -656,24 +643,8 @@ export default function Kardex() {
                 style={{ padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>Cancelar</button>
               <button onClick={() => handleAprobacion(confirmApr.mov, confirmApr.accion)}
                 style={{ background:confirmApr.accion==='aprobado'?'#166534':'#991B1B', color:'white', border:'none', borderRadius:7, padding:'5px 13px', fontSize:12, cursor:'pointer' }}>
-                {confirmApr.accion === 'aprobado' ? 'Sí, aprobar' : 'Sí, rechazar'}
+                {confirmApr.accion==='aprobado'?'Sí, aprobar':'Sí, rechazar'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Modal editar UUID ── */}
-      {editUUID && isAdmin && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
-          <div style={{ background:'white', borderRadius:12, padding:20, width:'100%', maxWidth:400 }}>
-            <p style={{ fontWeight:500, marginBottom:12 }}>Registrar UUID de factura</p>
-            <input type="text" value={editUUID.uuid} onChange={e => setEditUUID(x => ({ ...x, uuid:e.target.value }))}
-              placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
-              style={{ ...inp, fontFamily:'monospace', fontSize:11, marginBottom:12 }} />
-            <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
-              <button onClick={() => setEditUUID(null)} style={{ padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>Cancelar</button>
-              <button onClick={handleSaveUUID} style={{ background:'#1a4f8a', color:'white', border:'none', borderRadius:7, padding:'5px 13px', fontSize:12, cursor:'pointer' }}>Guardar UUID</button>
             </div>
           </div>
         </div>

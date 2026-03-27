@@ -37,6 +37,8 @@ export default function Kardex() {
   const [proveedores, setProveedores] = useState([])
   const [pedidosOC,   setPedidosOC]   = useState([]) // OCs aprobadas/enviadas disponibles
   const [ocCompletas,  setOcCompletas]  = useState(new Set()) // IDs de OCs con recepción completa
+  const [costoMap,      setCostoMap]      = useState({})
+  const [preciosCiudad, setPreciosCiudad] = useState([])
   const [loading,     setLoading]     = useState(true)
   const [modal,       setModal]       = useState(false)
   const [saving,      setSaving]      = useState(false)

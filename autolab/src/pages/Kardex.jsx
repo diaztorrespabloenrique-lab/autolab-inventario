@@ -108,6 +108,12 @@ export default function Kardex() {
       }
     }
 
+    // Cargar costos promedio
+    const { data:costos } = await supabase.from('inventario').select('taller_id, sku_id, costo_promedio')
+    const costoMap = {}
+    ;(costos ?? []).forEach(r => { costoMap[`${r.taller_id}_${r.sku_id}`] = r.costo_promedio })
+    setCostoMap(costoMap)
+
     setMovs(movsConNombre)
     setTalleres(t ?? [])
     setSkus(s ?? [])
@@ -397,10 +403,27 @@ export default function Kardex() {
                     </td>
                     <td style={tds}>{m.proveedores?.nombre ?? <span style={{ color:'#ccc' }}>—</span>}</td>
                     <td style={{ ...tds, textAlign:'right' }}>
-                      {m.precio_unitario ? `$${Number(m.precio_unitario).toLocaleString('es-MX')}` : <span style={{ color:'#ccc' }}>—</span>}
+                      {m.tipo === 'salida' ? (
+                        costoMap[`${m.taller_id}_${m.sku_id}`]
+                          ? <div>
+                              <div style={{fontWeight:500}}>${Number(costoMap[`${m.taller_id}_${m.sku_id}`]).toLocaleString('es-MX',{minimumFractionDigits:2})}</div>
+                              <div style={{fontSize:9, color:'#888'}}>costo prom.</div>
+                            </div>
+                          : <span style={{ color:'#ccc' }}>—</span>
+                      ) : m.precio_unitario
+                        ? `$${Number(m.precio_unitario).toLocaleString('es-MX')}`
+                        : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
                     <td style={{ ...tds, textAlign:'right' }}>
-                      {m.precio_total ? `$${Number(m.precio_total).toLocaleString('es-MX')}` : <span style={{ color:'#ccc' }}>—</span>}
+                      {m.tipo === 'salida' ? (
+                        costoMap[`${m.taller_id}_${m.sku_id}`]
+                          ? <span style={{color:'#A32D2D', fontWeight:500}}>
+                              -${(Number(costoMap[`${m.taller_id}_${m.sku_id}`]) * m.cantidad).toLocaleString('es-MX',{minimumFractionDigits:2})}
+                            </span>
+                          : <span style={{ color:'#ccc' }}>—</span>
+                      ) : m.precio_total
+                        ? `$${Number(m.precio_total).toLocaleString('es-MX')}`
+                        : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
 
                     {/* Estado aprobación — solo sistema */}

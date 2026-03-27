@@ -685,12 +685,33 @@ export default function Pedidos() {
                 Cerrar
               </button>
               {modalEmail.pedido.proveedores?.email && (
-                <button onClick={()=> {
-                  const to  = encodeURIComponent(modalEmail.pedido.proveedores.email)
-                  const sub = encodeURIComponent(`Orden de Compra OC-${modalEmail.pedido.numero_oc} — Autolab MX`)
-                  window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${sub}`, '_blank')
-                }} style={{...btn('#1a4f8a'), padding:'6px 14px', fontSize:12}}>
-                  Abrir en Gmail ↗
+                <button onClick={async () => {
+                  setCreandoDraft(true)
+                  try {
+                    const res = await fetch('https://api.anthropic.com/v1/messages', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 1000,
+                        system: 'Eres un asistente que crea borradores de email en Gmail. Cuando recibas instrucciones, usa la herramienta de Gmail para crear el borrador y responde SOLO con el texto: "OK: " seguido de la URL del borrador.',
+                        messages: [{ role: 'user', content: `Crea un borrador de Gmail con estos datos exactos:
+Para: ${modalEmail.pedido.proveedores.email}
+Asunto: Orden de Compra OC-${modalEmail.pedido.numero_oc} — Autolab MX
+Cuerpo HTML: ${modalEmail.emailHtml}` }],
+                        mcp_servers: [{ type: 'url', url: 'https://gmail.mcp.claude.com/mcp', name: 'gmail' }]
+                      })
+                    })
+                    const data = await res.json()
+                    window.open('https://mail.google.com/mail/u/0/#drafts', '_blank')
+                  } catch(e) {
+                    window.open('https://mail.google.com/mail/u/0/#drafts', '_blank')
+                  } finally {
+                    setCreandoDraft(false)
+                  }
+                }} disabled={creandoDraft}
+                style={{...btn('#1a4f8a'), padding:'6px 14px', fontSize:12, opacity:creandoDraft?0.7:1}}>
+                  {creandoDraft ? 'Creando borrador...' : '📧 Crear borrador en Gmail'}
                 </button>
               )}
             </div>

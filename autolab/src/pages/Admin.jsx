@@ -9,7 +9,7 @@ const btn  = (c='#1a4f8a') => ({ background:c, color:'white', border:'none', bor
 const th   = { padding:'7px 10px', fontSize:11, fontWeight:500, color:'#666', background:'#f5f5f3', borderBottom:'0.5px solid #e0dfd8' }
 const td   = { padding:'7px 10px', fontSize:12, borderBottom:'0.5px solid #f0efe8', verticalAlign:'middle' }
 
-const TABS = ['Usuarios','Talleres','Tipos de refacción','SKUs','Proveedores']
+const TABS = ['Usuarios','Talleres','Tipos de refacción','SKUs','Proveedores','Modelos']
 
 export default function Admin() {
   const { perfil } = useAuth()
@@ -34,6 +34,7 @@ export default function Admin() {
       {tab==='Tipos de refacción' && <TabTipos />}
       {tab==='SKUs'               && <TabSkus />}
       {tab==='Proveedores'        && <TabProveedores />}
+      {tab==='Modelos'             && <TabModelos />}
     </div>
   )
 }
@@ -592,6 +593,207 @@ function TabSkus() {
             <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
               <button onClick={()=>{setModal(false);setEditing(null);setForm(initForm)}} style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
               <button onClick={guardar} disabled={saving} style={{...btn(), opacity:saving?0.7:1}}>{saving?'Guardando...':'Guardar'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── TAB: MODELOS ──────────────────────────────────────────
+export function TabModelos() {
+  const [modelos,  setModelos]  = useState([])
+  const [skus,     setSkus]     = useState([])
+  const [relacs,   setRelacs]   = useState([]) // [{modelo_id, sku_id}]
+  const [modal,    setModal]    = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const [editing,  setEditing]  = useState(null)
+  const [form,     setForm]     = useState({ nombre:'', skus_sel:[] })
+  const [buscar,   setBuscar]   = useState('')
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    const [{ data:m }, { data:s }, { data:r }] = await Promise.all([
+      supabase.from('modelos').select('*').order('nombre'),
+      supabase.from('skus').select('*').eq('activo',true).order('codigo'),
+      supabase.from('modelo_sku').select('*'),
+    ])
+    setModelos(m??[]); setSkus(s??[]); setRelacs(r??[])
+  }
+
+  function skusDeModelo(modelo_id) {
+    return relacs.filter(r => r.modelo_id === modelo_id).map(r => r.sku_id)
+  }
+
+  function abrir(m = null) {
+    setForm(m
+      ? { nombre:m.nombre, skus_sel: skusDeModelo(m.id) }
+      : { nombre:'', skus_sel:[] }
+    )
+    setEditing(m?.id ?? null)
+    setModal(true)
+  }
+
+  function toggleSku(sku_id) {
+    setForm(f => ({
+      ...f,
+      skus_sel: f.skus_sel.includes(sku_id)
+        ? f.skus_sel.filter(id => id !== sku_id)
+        : [...f.skus_sel, sku_id]
+    }))
+  }
+
+  async function guardar() {
+    if (!form.nombre.trim()) { alert('El nombre es requerido'); return }
+    setSaving(true)
+    let modelo_id = editing
+
+    if (editing) {
+      await supabase.from('modelos').update({ nombre:form.nombre.trim() }).eq('id', editing)
+    } else {
+      const { data:nm } = await supabase.from('modelos').insert({ nombre:form.nombre.trim() }).select().single()
+      modelo_id = nm?.id
+    }
+
+    if (modelo_id) {
+      // Borrar todas las relaciones del modelo y recriarlas
+      await supabase.from('modelo_sku').delete().eq('modelo_id', modelo_id)
+      if (form.skus_sel.length > 0) {
+        await supabase.from('modelo_sku').insert(
+          form.skus_sel.map(sku_id => ({ modelo_id, sku_id }))
+        )
+      }
+    }
+
+    setModal(false); setEditing(null); load()
+    setSaving(false)
+  }
+
+  const th = { padding:'7px 10px', fontSize:11, fontWeight:500, color:'#666', background:'#f5f5f3', borderBottom:'0.5px solid #e0dfd8' }
+  const td = { padding:'7px 10px', fontSize:12, borderBottom:'0.5px solid #f0efe8', verticalAlign:'middle' }
+  const inp = { padding:'6px 9px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, width:'100%' }
+  const btnS = (c='#1a4f8a') => ({ background:c, color:'white', border:'none', borderRadius:7, padding:'5px 13px', fontSize:11, cursor:'pointer', fontWeight:500 })
+
+  const modelosFilt = modelos.filter(m =>
+    !buscar || m.nombre.toLowerCase().includes(buscar.toLowerCase())
+  )
+
+  return (
+    <div>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
+        <div style={{display:'flex', gap:8, alignItems:'center'}}>
+          <p style={{fontSize:13, color:'#888'}}>{modelos.filter(m=>m.activo).length} modelos · {relacs.length} relaciones SKU</p>
+          <input value={buscar} onChange={e=>setBuscar(e.target.value)}
+            placeholder="Buscar modelo..." 
+            style={{padding:'5px 9px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, width:160}}/>
+        </div>
+        <button onClick={()=>abrir()} style={btnS()}>+ Nuevo modelo</button>
+      </div>
+
+      <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+        <thead><tr>
+          <th style={th}>Modelo</th>
+          <th style={th}>Llantas</th>
+          <th style={th}>Baterías</th>
+          <th style={th}>Acciones</th>
+        </tr></thead>
+        <tbody>
+          {modelosFilt.length === 0 && (
+            <tr><td colSpan={4} style={{padding:24, textAlign:'center', color:'#aaa'}}>
+              {buscar ? 'Sin resultados' : 'No hay modelos registrados'}
+            </td></tr>
+          )}
+          {modelosFilt.map(m => {
+            const skuIds = skusDeModelo(m.id)
+            const skuObjs = skuIds.map(id => skus.find(s => s.id === id)).filter(Boolean)
+            const llantas  = skuObjs.filter(s => !s.codigo.toUpperCase().includes('BAT'))
+            const baterias = skuObjs.filter(s => s.codigo.toUpperCase().includes('BAT'))
+            return (
+              <tr key={m.id}>
+                <td style={{...td, fontWeight:500, fontSize:13}}>{m.nombre}</td>
+                <td style={td}>
+                  {llantas.length > 0
+                    ? <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+                        {llantas.map(s => (
+                          <span key={s.id} style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#DCFCE7', color:'#166534', fontFamily:'monospace'}}>
+                            {s.codigo}
+                          </span>
+                        ))}
+                      </div>
+                    : <span style={{color:'#ccc', fontSize:11}}>—</span>}
+                </td>
+                <td style={td}>
+                  {baterias.length > 0
+                    ? <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+                        {baterias.map(s => (
+                          <span key={s.id} style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#FEF9C3', color:'#854D0E'}}>
+                            {s.codigo}
+                          </span>
+                        ))}
+                      </div>
+                    : <span style={{color:'#ccc', fontSize:11}}>—</span>}
+                </td>
+                <td style={td}>
+                  <button onClick={()=>abrir(m)} style={{...btnS(), padding:'3px 10px', fontSize:10}}>Editar</button>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+
+      {modal && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
+          <div style={{background:'white', borderRadius:14, padding:22, width:'100%', maxWidth:520, maxHeight:'90vh', overflowY:'auto'}}>
+            <p style={{fontWeight:500, marginBottom:14}}>{editing?'Editar modelo':'Nuevo modelo'}</p>
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:11, color:'#666', display:'block', marginBottom:3}}>Nombre *</label>
+              <input style={inp} value={form.nombre}
+                onChange={e=>setForm(f=>({...f,nombre:e.target.value}))}
+                placeholder="Ej: VERSA ADVANCE"/>
+            </div>
+
+            <div style={{marginBottom:14}}>
+              <label style={{fontSize:11, color:'#666', display:'block', marginBottom:8}}>
+                SKUs asociados <span style={{color:'#aaa', fontSize:10}}>({form.skus_sel.length} seleccionados)</span>
+              </label>
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:4}}>
+                {['Llantas','Baterías'].map(tipo => {
+                  const esBat = tipo === 'Baterías'
+                  const lista = skus.filter(s => s.codigo.toUpperCase().includes('BAT') === esBat)
+                  return (
+                    <div key={tipo}>
+                      <p style={{fontSize:10, fontWeight:500, color:'#888', marginBottom:6, textTransform:'uppercase'}}>{tipo}</p>
+                      {lista.map(s => {
+                        const sel = form.skus_sel.includes(s.id)
+                        return (
+                          <label key={s.id} onClick={()=>toggleSku(s.id)}
+                            style={{display:'flex', alignItems:'center', gap:7, padding:'5px 8px', borderRadius:7, marginBottom:3, cursor:'pointer',
+                              background:sel?(esBat?'#FEF9C3':'#DCFCE7'):'#f9f9f7',
+                              border:`1px solid ${sel?(esBat?'#FCD34D':'#86EFAC'):'#e0dfd8'}`}}>
+                            <input type="checkbox" checked={sel} onChange={()=>{}} style={{pointerEvents:'none'}}/>
+                            <span style={{fontSize:11, fontFamily:'monospace', fontWeight:sel?500:400, color:sel?(esBat?'#854D0E':'#166534'):'#444'}}>
+                              {s.codigo}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>{setModal(false);setEditing(null)}}
+                style={{padding:'5px 12px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={guardar} disabled={saving} style={{...btnS(), opacity:saving?0.7:1}}>
+                {saving?'Guardando...':'Guardar'}
+              </button>
             </div>
           </div>
         </div>

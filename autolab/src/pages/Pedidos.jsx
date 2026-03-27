@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { jsPDF } from 'jspdf'
 import { supabase } from '../supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { formatMXN, IVA } from '../lib/inventario'
@@ -48,7 +49,6 @@ export default function Pedidos() {
 
   const [modalAprobar, setModalAprobar] = useState(null)
   const [notasAprob,   setNotasAprob]   = useState('')
-  const [modalEmail,   setModalEmail]   = useState(null)
   const [expandido,    setExpandido]    = useState(null)
   const [modalFactura, setModalFactura] = useState(null)
   const [uuidFact,     setUuidFact]     = useState('')
@@ -223,6 +223,117 @@ export default function Pedidos() {
         </p>
       </div>
     </div>`
+  }
+
+  // Genera un PDF de la OC y lo descarga, luego abre Gmail
+  async function enviarEmailConPDF(pedido) {
+    const items = Array.isArray(pedido.items) ? pedido.items : []
+    const prov  = pedido.proveedores
+    const fecha = new Date().toLocaleDateString('es-MX', { day:'2-digit', month:'long', year:'numeric' })
+
+    const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' })
+    const W = 210, mar = 18, contentW = W - mar * 2
+
+    // ── Header azul ──
+    doc.setFillColor(26, 79, 138)
+    doc.rect(0, 0, W, 36, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(16); doc.setFont('helvetica','bold')
+    doc.text(`Orden de Compra OC-${pedido.numero_oc}`, mar, 16)
+    doc.setFontSize(9); doc.setFont('helvetica','normal')
+    doc.text(`Autolab MX  ·  ${fecha}`, mar, 24)
+
+    // ── Datos proveedor ──
+    doc.setTextColor(60, 60, 60)
+    doc.setFontSize(10); doc.setFont('helvetica','normal')
+    let y = 46
+    doc.text(`Proveedor: `, mar, y)
+    doc.setFont('helvetica','bold')
+    doc.text(prov?.nombre ?? '—', mar + 24, y)
+    if (prov?.email) {
+      doc.setFont('helvetica','normal')
+      doc.setFontSize(9); doc.setTextColor(100,100,100)
+      doc.text(prov.email, mar, y + 6)
+      y += 6
+    }
+    y += 12
+
+    // ── Tabla cabecera ──
+    const cols = [65, 25, 28, 35, 35]  // anchos columnas mm
+    const headers = ['Taller', 'SKU', 'Cant.', 'P. Unit. s/IVA', 'Total c/IVA']
+    doc.setFillColor(245, 245, 243)
+    doc.rect(mar, y - 4, contentW, 8, 'F')
+    doc.setTextColor(100, 100, 100); doc.setFontSize(8); doc.setFont('helvetica','bold')
+    let x = mar
+    headers.forEach((h, i) => {
+      const align = i >= 2 ? 'right' : 'left'
+      const xPos = align === 'right' ? x + cols[i] - 2 : x + 2
+      doc.text(h, xPos, y, { align })
+      x += cols[i]
+    })
+    y += 6
+
+    // ── Filas ──
+    doc.setFont('helvetica','normal'); doc.setFontSize(9)
+    let total = 0
+    items.forEach((it, idx) => {
+      const s = skus.find(sk => sk.id === it.sku_id)
+      const t = talleres.find(tl => tl.id === it.taller_id)
+      const subtotal = (it.precio || 0) * it.cantidad
+      total += subtotal
+      if (idx % 2 === 0) {
+        doc.setFillColor(252, 252, 250)
+        doc.rect(mar, y - 4, contentW, 7, 'F')
+      }
+      doc.setTextColor(50, 50, 50)
+      x = mar
+      const row = [
+        t?.nombre ?? '—',
+        s?.codigo ?? '—',
+        String(it.cantidad),
+        `$${Number((it.precio||0)/1.16).toLocaleString('es-MX',{minimumFractionDigits:2})}`,
+        `$${Number(subtotal).toLocaleString('es-MX',{minimumFractionDigits:2})}`
+      ]
+      row.forEach((val, i) => {
+        const align = i >= 2 ? 'right' : 'left'
+        const xPos = align === 'right' ? x + cols[i] - 2 : x + 2
+        doc.text(val, xPos, y, { align })
+        x += cols[i]
+      })
+      // línea separadora
+      doc.setDrawColor(230, 230, 225)
+      doc.line(mar, y + 2, mar + contentW, y + 2)
+      y += 7
+    })
+
+    // ── Total ──
+    y += 2
+    doc.setFillColor(245, 245, 243)
+    doc.rect(mar, y - 4, contentW, 9, 'F')
+    doc.setFont('helvetica','bold'); doc.setFontSize(10)
+    doc.setTextColor(26, 79, 138)
+    doc.text('Total c/IVA:', mar + contentW - 37, y + 1, { align: 'right' })
+    doc.text(`$${Number(total).toLocaleString('es-MX',{minimumFractionDigits:2})}`, mar + contentW - 2, y + 1, { align: 'right' })
+
+    // ── Footer ──
+    y += 16
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150,150,150)
+    doc.text('Por favor confirmar recepción y fecha estimada de entrega.', mar, y)
+    doc.text('Dudas: pablo.diaz@autolab.com.co', mar, y + 5)
+    doc.setFontSize(7)
+    doc.text(`OC-${pedido.numero_oc}  ·  Autolab MX  ·  Sistema de Inventario`, mar, y + 12)
+
+    // ── Descargar ──
+    const filename = `OC-${pedido.numero_oc}_Autolab_MX.pdf`
+    doc.save(filename)
+
+    // ── Abrir Gmail con recipient y asunto ──
+    setTimeout(() => {
+      window.open(
+        `https://mail.google.com/mail/u/0/?view=cm&fs=1&to=${encodeURIComponent(prov?.email ?? '')}&su=${encodeURIComponent('Orden de Compra OC-' + pedido.numero_oc + ' — Autolab MX')}`,
+        '_blank'
+      )
+    }, 800)
   }
 
   async function aprobarPedido() {
@@ -440,7 +551,7 @@ export default function Pedidos() {
                         <button onClick={()=>setModalAprobar(p)} style={btn('#166534')}>Aprobar</button>
                       )}
                       {isAdmin && p.estado==='aprobado' && (
-                        <button onClick={()=>{setDraftCreado(false);setModalEmail({pedido:p, emailHtml:construirEmailProveedor(p)})}}
+                        <button onClick={()=>enviarEmailConPDF(p)}
                           style={btn('#1E40AF')}>📧 Email</button>
                       )}
                       {canWrite && p.estado==='aprobado' && (
@@ -660,81 +771,6 @@ export default function Pedidos() {
         </div>
       )}
 
-      {/* ── Modal email proveedor ── */}
-      {modalEmail && (
-        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
-          <div style={{background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:720, maxHeight:'92vh', overflowY:'auto'}}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14}}>
-              <div>
-                <p style={{fontWeight:500, fontSize:14}}>📧 Email al proveedor — OC-{modalEmail.pedido.numero_oc}</p>
-                <p style={{fontSize:11, color:'#888', marginTop:2}}>
-                  Para: <strong>{modalEmail.pedido.proveedores?.nombre}</strong>
-                  {modalEmail.pedido.proveedores?.email && (
-                    <span style={{marginLeft:6, fontFamily:'monospace', fontSize:11}}>{modalEmail.pedido.proveedores.email}</span>
-                  )}
-                </p>
-              </div>
-              <button onClick={()=>setModalEmail(null)}
-                style={{background:'none', border:'0.5px solid #ccc', borderRadius:7, padding:'3px 10px', cursor:'pointer'}}>✕</button>
-            </div>
-            <div style={{border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden', marginBottom:16}}
-              dangerouslySetInnerHTML={{__html: modalEmail.emailHtml}}/>
-            {draftCreado && (
-              <div style={{background:'#EAF3DE', borderRadius:8, padding:'10px 14px', marginBottom:12, fontSize:12, color:'#166534', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                <span>✅ Borrador creado en Gmail</span>
-                <a href="https://mail.google.com/mail/u/0/#drafts" target="_blank" rel="noreferrer"
-                  style={{color:'#1a4f8a', fontWeight:500, fontSize:11}}>Abrir Gmail → Borradores ↗</a>
-              </div>
-            )}
-            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
-              <button onClick={()=>{setModalEmail(null);setDraftCreado(false)}}
-                style={{padding:'6px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
-                Cerrar
-              </button>
-              {modalEmail.pedido.proveedores?.email && (
-                <button onClick={async () => {
-                  setCreandoDraft(true)
-                  try {
-                    const res = await fetch('https://api.anthropic.com/v1/messages', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        model: 'claude-sonnet-4-20250514',
-                        max_tokens: 500,
-                        tools: [{
-                          type: 'computer_20241022',
-                          name: 'computer',
-                          display_width_px: 1024,
-                          display_height_px: 768,
-                        }],
-                        mcp_servers: [{ type: 'url', url: 'https://gmail.mcp.claude.com/mcp', name: 'gmail-mcp' }],
-                        messages: [{
-                          role: 'user',
-                          content: `Usa la herramienta gmail_create_draft para crear un borrador con estos datos:
-to: "${modalEmail.pedido.proveedores?.email}"
-subject: "Orden de Compra OC-${modalEmail.pedido.numero_oc} — Autolab MX"
-contentType: "text/html"
-body: ${JSON.stringify(modalEmail.emailHtml)}
-Responde solo "OK" cuando lo hayas creado.`
-                        }]
-                      })
-                    })
-                    setDraftCreado(true)
-                  } catch(e) {
-                    console.error(e)
-                    setDraftCreado(true) // abrir igualmente
-                  } finally {
-                    setCreandoDraft(false)
-                  }
-                }} disabled={creandoDraft}
-                style={{...btn('#1a4f8a'), padding:'6px 14px', fontSize:12, opacity:creandoDraft?0.7:1}}>
-                  {creandoDraft ? '⏳ Creando borrador...' : '📧 Crear borrador'}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Modal factura ── */}
       {modalFactura && (

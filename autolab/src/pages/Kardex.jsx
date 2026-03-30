@@ -72,7 +72,7 @@ export default function Kardex() {
           marca, placa, es_garantia, precio_unitario, precio_total,
           uuid_factura, usuario_id, proveedor_id, taller_origen_id,
           appointment_id, fuente, estado_aprobacion, aprobado_por,
-          pedido_id, created_at,
+          pedido_id, ajuste_tipo, created_at,
           talleres!movimientos_taller_id_fkey(nombre, region),
           skus(codigo),
           proveedores(nombre),
@@ -355,11 +355,14 @@ export default function Kardex() {
                 const tc   = TIPO_CFG[m.tipo] ?? TIPO_CFG.ajuste
                 const rc   = REGIONES[m.talleres?.region] ?? {}
                 const oc   = ORIGEN_CFG[m.origen] ?? null
-                const esSistema = m.fuente === 'sistema'
-                const eapcfg = esSistema ? (ESTADO_APR_CFG[m.estado_aprobacion] ?? ESTADO_APR_CFG.pendiente) : null
+                const esSistema   = m.fuente === 'sistema'
+                const esAjuste    = m.tipo === 'ajuste'
+                // Mostrar estado de aprobación para: movimientos del sistema Y ajustes manuales pendientes
+                const mostrarEstado = esSistema || (esAjuste && m.estado_aprobacion === 'pendiente')
+                const eapcfg = mostrarEstado ? (ESTADO_APR_CFG[m.estado_aprobacion] ?? ESTADO_APR_CFG.pendiente) : null
 
                 return (
-                  <tr key={m.id} style={{ background: esSistema && m.estado_aprobacion==='pendiente' ? '#FFFEF0' : 'white' }}>
+                  <tr key={m.id} style={{ background: (esSistema || esAjuste) && m.estado_aprobacion==='pendiente' ? '#FFFEF0' : 'white' }}>
                     <td style={tds}>{m.fecha}</td>
                     <td style={tds}><span style={{ color:tc.color, fontWeight:500 }}>{tc.icon} {m.tipo}</span></td>
                     <td style={tds}>
@@ -386,8 +389,14 @@ export default function Kardex() {
                     </td>
                     <td style={{ ...tds, fontSize:10, fontWeight:500, color:rc.color }}>{rc.label}</td>
                     <td style={{ ...tds, fontFamily:'monospace', fontSize:11 }}>{m.skus?.codigo}</td>
-                    <td style={{ ...tds, fontWeight:500, color:tc.color, textAlign:'right' }}>
-                      {m.tipo==='entrada'?'+':m.tipo==='salida'?'-':''}{m.cantidad}
+                    <td style={{ ...tds, fontWeight:500, textAlign:'right',
+                      color: m.tipo==='ajuste'
+                        ? (m.ajuste_tipo==='incremento'?'#166534':'#991B1B')
+                        : tc.color }}>
+                      {m.tipo==='entrada' ? '+' :
+                       m.tipo==='salida'  ? '−' :
+                       m.tipo==='ajuste'  ? (m.ajuste_tipo==='incremento' ? '+' : '−') : ''}
+                      {m.cantidad}
                     </td>
 
                     {/* OC vinculada */}

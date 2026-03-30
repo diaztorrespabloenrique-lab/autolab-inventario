@@ -435,7 +435,7 @@ export default function Kardex() {
                           <span style={{ fontSize:10, padding:'2px 8px', borderRadius:20, fontWeight:500, background:eapcfg.bg, color:eapcfg.color, whiteSpace:'nowrap' }}>
                             {eapcfg.label}
                           </span>
-                          {isAdmin && m.estado_aprobacion === 'pendiente' && (
+                          {canWrite && m.estado_aprobacion === 'pendiente' && (
                             <div style={{ display:'flex', gap:4 }}>
                               <button onClick={() => setConfirmApr({ mov:m, accion:'aprobado' })}
                                 style={{ fontSize:10, padding:'2px 7px', border:'none', borderRadius:5, cursor:'pointer', background:'#DCFCE7', color:'#166534', fontWeight:500 }}>
@@ -692,7 +692,7 @@ export default function Kardex() {
       )}
 
       {/* ── Modal aprobar/rechazar sistema ── */}
-      {confirmApr && isAdmin && (
+      {confirmApr && canWrite && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }}>
           <div style={{ background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:400 }}>
             <p style={{ fontWeight:500, marginBottom:8 }}>

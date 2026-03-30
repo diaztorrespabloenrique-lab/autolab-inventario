@@ -461,7 +461,7 @@ export default function Kardex() {
                           <span style={{ fontSize:10, padding:'2px 8px', borderRadius:20, fontWeight:500, background:eapcfg.bg, color:eapcfg.color, whiteSpace:'nowrap' }}>
                             {eapcfg.label}
                           </span>
-                          {canWrite && m.estado_aprobacion === 'pendiente' && (
+                          {(m.tipo === 'ajuste' ? isAdmin : canWrite) && m.estado_aprobacion === 'pendiente' && (
                             <div style={{ display:'flex', gap:4 }}>
                               <button onClick={() => setConfirmApr({ mov:m, accion:'aprobado' })}
                                 style={{ fontSize:10, padding:'2px 7px', border:'none', borderRadius:5, cursor:'pointer', background:'#DCFCE7', color:'#166534', fontWeight:500 }}>

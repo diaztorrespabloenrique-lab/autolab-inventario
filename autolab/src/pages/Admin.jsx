@@ -9,7 +9,7 @@ const btn  = (c='#1a4f8a') => ({ background:c, color:'white', border:'none', bor
 const th   = { padding:'7px 10px', fontSize:11, fontWeight:500, color:'#666', background:'#f5f5f3', borderBottom:'0.5px solid #e0dfd8' }
 const td   = { padding:'7px 10px', fontSize:12, borderBottom:'0.5px solid #f0efe8', verticalAlign:'middle' }
 
-const TABS = ['Usuarios','Talleres','Tipos de refacción','SKUs','Proveedores','Modelos']
+const TABS = ['Usuarios','Talleres','Tipos de refacción','SKUs','Proveedores','Modelos','Rotación']
 
 export default function Admin() {
   const { perfil } = useAuth()
@@ -35,6 +35,7 @@ export default function Admin() {
       {tab==='SKUs'               && <TabSkus />}
       {tab==='Proveedores'        && <TabProveedores />}
       {tab==='Modelos'             && <TabModelos />}
+      {tab==='Rotación'            && <TabRotacion />}
     </div>
   )
 }
@@ -836,6 +837,126 @@ export function TabModelos() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── TAB: ROTACIÓN ─────────────────────────────────────────
+function TabRotacion() {
+  const [inv,      setInv]      = useState([])
+  const [talleres, setTalleres] = useState([])
+  const [skus,     setSkus]     = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [running,  setRunning]  = useState(false)
+  const [msg,      setMsg]      = useState(null)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    const [{ data:i }, { data:t }, { data:s }] = await Promise.all([
+      supabase.from('inventario').select('taller_id, sku_id, rotacion, rotacion_semilla, semanas_con_data'),
+      supabase.from('talleres').select('id,nombre,region').eq('activo',true).order('nombre'),
+      supabase.from('skus').select('id,codigo').eq('activo',true).order('codigo'),
+    ])
+    setInv(i??[]); setTalleres(t??[]); setSkus(s??[]); setLoading(false)
+  }
+
+  async function recalcular() {
+    setRunning(true); setMsg(null)
+    const { error } = await supabase.rpc('calcular_rotacion_semanal')
+    if (error) {
+      setMsg({ tipo:'error', texto: 'Error: ' + error.message })
+    } else {
+      setMsg({ tipo:'ok', texto: '✅ Rotación recalculada exitosamente con datos de las últimas 5 semanas.' })
+      load()
+    }
+    setRunning(false)
+  }
+
+  const th = { padding:'7px 10px', fontSize:11, fontWeight:500, color:'#666', background:'#f5f5f3', borderBottom:'0.5px solid #e0dfd8', whiteSpace:'nowrap' }
+  const td = { padding:'7px 10px', fontSize:12, borderBottom:'0.5px solid #f0efe8', verticalAlign:'middle' }
+  const btnS = (c='#1a4f8a') => ({ background:c, color:'white', border:'none', borderRadius:7, padding:'5px 13px', fontSize:11, cursor:'pointer', fontWeight:500 })
+
+  if (loading) return <div style={{color:'#aaa', fontSize:13}}>Cargando...</div>
+
+  return (
+    <div>
+      {/* Header y botón */}
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16}}>
+        <div>
+          <p style={{fontSize:13, fontWeight:500}}>Rotación de inventario</p>
+          <p style={{fontSize:11, color:'#888', marginTop:3}}>
+            Ventana deslizante de 5 semanas · Solo salidas operativas (excluye garantías y movimientos entre talleres)
+          </p>
+        </div>
+        <button onClick={recalcular} disabled={running} style={{...btnS(), opacity:running?0.7:1}}>
+          {running ? '⏳ Calculando...' : '↻ Recalcular rotación ahora'}
+        </button>
+      </div>
+
+      {msg && (
+        <div style={{borderRadius:8, padding:'10px 14px', marginBottom:16, fontSize:12,
+          background:msg.tipo==='ok'?'#EAF3DE':'#FEE2E2',
+          color:msg.tipo==='ok'?'#166534':'#991B1B'}}>
+          {msg.texto}
+        </div>
+      )}
+
+      {/* Info de transición */}
+      <div style={{background:'#EEF4FF', border:'1px solid #BFDBFE', borderRadius:9, padding:'10px 14px', marginBottom:16, fontSize:11, color:'#1E40AF'}}>
+        <strong>📅 Período de transición:</strong> Durante las primeras 5 semanas de operación del portal, la rotación se calcula mezclando la <strong>rotación semilla</strong> (valor histórico inicial) con los datos reales registrados. La columna "Semanas con data" muestra el avance — al llegar a 5, el cálculo será 100% basado en datos del portal.
+      </div>
+
+      {/* Tabla */}
+      <div style={{background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden'}}>
+        <div style={{overflowX:'auto'}}>
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+            <thead><tr>
+              <th style={th}>Taller</th>
+              <th style={th}>SKU</th>
+              <th style={{...th, textAlign:'right'}}>Rotación actual</th>
+              <th style={{...th, textAlign:'right'}}>Semilla inicial</th>
+              <th style={{...th, textAlign:'center'}}>Semanas con data</th>
+              <th style={{...th, textAlign:'center'}}>Progreso</th>
+            </tr></thead>
+            <tbody>
+              {inv.filter(r => r.rotacion > 0 || r.rotacion_semilla > 0).map((r, idx) => {
+                const t = talleres.find(x => x.id === r.taller_id)
+                const s = skus.find(x => x.id === r.sku_id)
+                const semanas = r.semanas_con_data ?? 0
+                const pct = Math.min(100, Math.round((semanas / 5) * 100))
+                return (
+                  <tr key={`${r.taller_id}_${r.sku_id}`} style={{background:idx%2===0?'white':'#fafafa'}}>
+                    <td style={{...td, fontWeight:500}}>{t?.nombre ?? '—'}</td>
+                    <td style={{...td, fontFamily:'monospace', fontSize:11}}>{s?.codigo ?? '—'}</td>
+                    <td style={{...td, textAlign:'right', fontWeight:500, color:'#1a4f8a'}}>
+                      {Number(r.rotacion ?? 0).toFixed(2)}/sem
+                    </td>
+                    <td style={{...td, textAlign:'right', color:'#888'}}>
+                      {Number(r.rotacion_semilla ?? 0).toFixed(2)}/sem
+                    </td>
+                    <td style={{...td, textAlign:'center'}}>
+                      <span style={{padding:'1px 8px', borderRadius:20, fontSize:10, fontWeight:500,
+                        background:semanas>=5?'#DCFCE7':semanas>0?'#FEF9C3':'#F1EFE8',
+                        color:semanas>=5?'#166534':semanas>0?'#854D0E':'#888'}}>
+                        {semanas}/5
+                      </span>
+                    </td>
+                    <td style={{...td, textAlign:'center'}}>
+                      <div style={{background:'#f0f0ee', borderRadius:20, height:6, width:80, margin:'0 auto', overflow:'hidden'}}>
+                        <div style={{width:`${pct}%`, height:'100%', borderRadius:20,
+                          background:pct>=100?'#22C55E':pct>0?'#F59E0B':'#e0dfd8',
+                          transition:'width 0.3s'}}/>
+                      </div>
+                      <span style={{fontSize:9, color:'#888'}}>{pct}%</span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }

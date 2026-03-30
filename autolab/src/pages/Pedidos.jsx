@@ -36,6 +36,7 @@ export default function Pedidos() {
 
   const [fTallerProp, setFTallerProp] = useState('')
   const [fSkuProp,    setFSkuProp]    = useState('')
+  const [fTipoProp,   setFTipoProp]   = useState('') // 'llanta' | 'bateria'
 
   const [modalPedido,  setModalPedido]  = useState(false)
   const [itemsPedido,  setItemsPedido]  = useState([])
@@ -89,6 +90,11 @@ export default function Pedidos() {
       if (fSkuProp    && r.sku_id    !== fSkuProp)    return
       const sku = skus.find(s => s.id === r.sku_id)
       if (!sku) return
+      if (fTipoProp) {
+        const esBat = sku.codigo.toUpperCase().includes('BAT')
+        if (fTipoProp === 'bateria' && !esBat) return
+        if (fTipoProp === 'llanta'  &&  esBat) return
+      }
       const cantPedir = Math.max(1, Math.round(r.rotacion * 4) - r.stock)
       // Buscar precio por ciudad del taller
       const tallerObj = talleres.find(t => t.id === r.taller_id)

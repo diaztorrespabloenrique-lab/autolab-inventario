@@ -58,6 +58,7 @@ export default function Kardex() {
     origen:'compra', notas:'', proveedor_id:'', precio_unitario:'',
     taller_origen_id:'', marca:'', placa:'', es_garantia:false,
     appointment_id:'', pedido_id:'',
+    ajuste_tipo:'incremento', ajuste_notas:'',
   }
   const [form, setForm] = useState(initForm)
 
@@ -200,7 +201,17 @@ export default function Kardex() {
       placa:       form.tipo === 'salida' && !form.es_garantia ? form.placa.trim().toUpperCase() : null,
       es_garantia: form.tipo === 'salida' ? form.es_garantia : false,
       fuente:      'manual',
-      estado_aprobacion: 'aprobado',
+      // Ajustes siempre pendientes (requieren aprobación de admin)
+      estado_aprobacion: form.tipo === 'ajuste' ? 'pendiente' : 'aprobado',
+      ajuste_tipo:  form.tipo === 'ajuste' ? form.ajuste_tipo : null,
+      // Ajuste: precio automático desde costo_promedio del taller/SKU (sin IVA → con IVA × 1.16)
+      precio_unitario: form.tipo === 'ajuste'
+        ? (costoMap[`${form.taller_id}_${form.sku_id}`]
+            ? Number(costoMap[`${form.taller_id}_${form.sku_id}`])
+            : null)
+        : form.tipo === 'entrada' && form.origen === 'compra'
+          ? parseFloat(form.precio_unitario) || null
+          : null,
       appointment_id: (form.tipo==='salida' && !form.es_garantia && form.appointment_id.trim())
         ? form.appointment_id.trim() : null,
       // Entrada de compra: vincular OC y proveedor, sin UUID
@@ -357,9 +368,15 @@ export default function Kardex() {
                         : <span style={{ color:'#ccc', fontSize:10 }}>—</span>}
                     </td>
                     <td style={tds}>
-                      {oc
-                        ? <span style={{ fontSize:10, padding:'1px 6px', borderRadius:20, background:oc.bg, color:oc.color, fontWeight:500 }}>{oc.label}</span>
-                        : <span style={{ color:'#ccc' }}>—</span>}
+                      {m.tipo === 'ajuste'
+                        ? <span style={{ fontSize:10, padding:'1px 6px', borderRadius:20, fontWeight:500,
+                            background:m.ajuste_tipo==='incremento'?'#DCFCE7':'#FEE2E2',
+                            color:m.ajuste_tipo==='incremento'?'#166534':'#991B1B' }}>
+                            {m.ajuste_tipo==='incremento'?'▲ Incremento':'▼ Decremento'}
+                          </span>
+                        : oc
+                          ? <span style={{ fontSize:10, padding:'1px 6px', borderRadius:20, background:oc.bg, color:oc.color, fontWeight:500 }}>{oc.label}</span>
+                          : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
                     <td style={{ ...tds, fontWeight:500 }}>
                       {m.talleres?.nombre}
@@ -483,7 +500,7 @@ export default function Kardex() {
             {/* Tipo */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:14 }}>
               {['entrada','salida','ajuste'].map(t => (
-                <button key={t} onClick={() => setForm(f => ({ ...f, tipo:t, es_garantia:false }))}
+                <button key={t} onClick={() => setForm(f => ({ ...f, tipo:t, es_garantia:false, ajuste_tipo:'incremento' }))}
                   style={{ padding:'8px', borderRadius:8, border:`1.5px solid ${form.tipo===t?'#1a4f8a':'#e0dfd8'}`,
                     background:form.tipo===t?'#E6F1FB':'white', color:form.tipo===t?'#0C447C':'#666',
                     fontWeight:form.tipo===t?500:400, cursor:'pointer', fontSize:12 }}>
@@ -546,6 +563,51 @@ export default function Kardex() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── Ajuste: tipo delta + precio ── */}
+            {form.tipo === 'ajuste' && (
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:11, color:'#666', marginBottom:8, fontWeight:500 }}>
+                  Tipo de ajuste *
+                  <span style={{ marginLeft:6, fontSize:10, color:'#888', fontWeight:400 }}>
+                    (requerirá aprobación del administrador)
+                  </span>
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12 }}>
+                  {[
+                    { k:'incremento', l:'▲ Incremento (+)', desc:'Suma al stock actual', bg:'#DCFCE7', color:'#166534', border:'#86EFAC' },
+                    { k:'decremento', l:'▼ Decremento (−)', desc:'Resta al stock actual', bg:'#FEE2E2', color:'#991B1B', border:'#FCA5A5' },
+                  ].map(opt => (
+                    <button key={opt.k} onClick={() => setForm(f => ({ ...f, ajuste_tipo:opt.k }))}
+                      style={{ padding:'10px 12px', borderRadius:8, fontSize:11, cursor:'pointer', textAlign:'left',
+                        border:`1.5px solid ${form.ajuste_tipo===opt.k ? opt.border : '#e0dfd8'}`,
+                        background:form.ajuste_tipo===opt.k ? opt.bg : 'white',
+                        color:form.ajuste_tipo===opt.k ? opt.color : '#444' }}>
+                      <div style={{ fontWeight:500 }}>{opt.l}</div>
+                      <div style={{ fontSize:10, marginTop:2, opacity:0.8 }}>{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <div>
+                  <label style={{ fontSize:11, color:'#666', display:'block', marginBottom:3 }}>
+                    Motivo del ajuste *
+                  </label>
+                  <input type="text" style={inp}
+                    value={form.ajuste_notas}
+                    onChange={e => setForm(f => ({ ...f, ajuste_notas:e.target.value }))}
+                    placeholder="Ej: Corrección conteo físico marzo" />
+                </div>
+                {/* Info: el costo se toma automáticamente */}
+                {form.taller_id && form.sku_id && costoMap[`${form.taller_id}_${form.sku_id}`] && (
+                  <div style={{ marginTop:8, background:'#E6F1FB', borderRadius:7, padding:'7px 10px', fontSize:11, color:'#0C447C' }}>
+                    💰 Costo promedio registrado: <strong>${Number(costoMap[`${form.taller_id}_${form.sku_id}`]).toLocaleString('es-MX', {minimumFractionDigits:2})}</strong> — se aplicará automáticamente al aprobar el ajuste.
+                  </div>
+                )}
+                <div style={{ marginTop:8, background:'#FEF9C3', borderRadius:7, padding:'7px 10px', fontSize:11, color:'#854D0E' }}>
+                  ⏳ El ajuste quedará <strong>pendiente de aprobación</strong>. El stock no cambia hasta que un administrador lo apruebe.
+                </div>
               </div>
             )}
 

@@ -208,10 +208,11 @@ function TabProveedores() {
 
 // ── TAB: TALLERES ──────────────────────────────────────────
 function TabTalleres() {
-  const [talleres, setTalleres] = useState([])
-  const [modal,    setModal]    = useState(false)
-  const [saving,   setSaving]   = useState(false)
-  const [editing,  setEditing]  = useState(null)
+  const [talleres,    setTalleres]    = useState([])
+  const [modal,       setModal]       = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [editing,     setEditing]     = useState(null)
+  const [confirmElim, setConfirmElim] = useState(null) // taller a eliminar
   const initForm = { nombre:'', region:'cdmx', cliente:'minave', activo:true }
   const [form, setForm] = useState(initForm)
 
@@ -250,6 +251,17 @@ function TabTalleres() {
   async function toggleActivo(t) {
     await supabase.from('talleres').update({ activo:!t.activo }).eq('id', t.id)
     load()
+  }
+
+  async function eliminarTaller(id) {
+    // Intentar eliminar — fallará si tiene movimientos o inventario asociado
+    const { error } = await supabase.from('talleres').delete().eq('id', id)
+    if (error) {
+      alert('No se puede eliminar: el taller tiene movimientos o inventario registrado.\n\nUsa "Desactivar" en su lugar para ocultarlo sin borrar el historial.')
+    } else {
+      load()
+    }
+    setConfirmElim(null)
   }
 
   return (
@@ -297,6 +309,10 @@ function TabTalleres() {
                             style={{padding:'3px 10px', fontSize:10, border:'0.5px solid #ccc', borderRadius:7, cursor:'pointer', background:'white'}}>
                             {t.activo?'Desactivar':'Activar'}
                           </button>
+                          <button onClick={()=>setConfirmElim(t)}
+                            style={{padding:'3px 10px', fontSize:10, border:'0.5px solid #fca5a5', borderRadius:7, cursor:'pointer', background:'#FEF2F2', color:'#991B1B'}}>
+                            Eliminar
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -307,6 +323,28 @@ function TabTalleres() {
           </div>
         )
       })}
+
+      {/* Modal confirmar eliminación */}
+      {confirmElim && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:400}}>
+            <p style={{fontWeight:500, marginBottom:8}}>¿Eliminar taller "{confirmElim.nombre}"?</p>
+            <div style={{background:'#FEF9C3', borderRadius:8, padding:'10px 12px', marginBottom:14, fontSize:12, color:'#854D0E'}}>
+              ⚠ Si el taller tiene movimientos o inventario registrado, la eliminación será bloqueada automáticamente. En ese caso usa <strong>Desactivar</strong> para ocultarlo sin perder el historial.
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmElim(null)}
+                style={{padding:'5px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={()=>eliminarTaller(confirmElim.id)}
+                style={{padding:'5px 13px', background:'#DC2626', color:'white', border:'none', borderRadius:7, fontSize:12, cursor:'pointer', fontWeight:500}}>
+                Sí, eliminar definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modal && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>

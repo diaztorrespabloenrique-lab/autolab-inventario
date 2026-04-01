@@ -2,13 +2,14 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
 const NAV = [
-  { to:'/',        label:'Dashboard',   roles:['admin','staff','proveedor','visor'], icon:'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
-  { to:'/conteos', label:'Conteos',     roles:['admin','staff','proveedor','visor'], icon:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6' },
-  { to:'/kardex',  label:'Kardex',      roles:['admin','staff','visor'],             icon:'M4 6h16M4 10h16M4 14h16M4 18h16' },
-  { to:'/pedidos', label:'Pedidos',     roles:['admin','staff','visor'],             icon:'M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z M3 6h18' },
-  { to:'/valor',   label:'Valor inv.',  roles:['admin','staff','visor'],             icon:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z' },
-  { to:'/homologacion', label:'Homologación', roles:['admin','staff','visor'], icon:'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2 M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z' },
-  { to:'/admin',   label:'Admin',       roles:['admin'],                             icon:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M23 21v-2a4 4 0 0 1-3-3.87 M16 3.13a4 4 0 0 1 0 7.75' },
+  { to:'/',             label:'Dashboard',      roles:['admin','staff','proveedor','visor','shops'], icon:'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' },
+  { to:'/conteos',      label:'Conteos',        roles:['admin','staff','proveedor','visor','shops'], icon:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6' },
+  { to:'/kardex',       label:'Kardex',         roles:['admin','staff','visor','shops'],             icon:'M4 6h16M4 10h16M4 14h16M4 18h16' },
+  { to:'/pedidos',      label:'Pedidos',        roles:['admin','staff','visor','shops'],             icon:'M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z M3 6h18' },
+  { to:'/valor',        label:'Valor inv.',     roles:['admin','staff','visor','shops'],             icon:'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z' },
+  { to:'/homologacion', label:'Homologación',   roles:['admin','staff','visor','shops'],             icon:'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2 M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2z' },
+  { to:'/ajustes-taller', label:'Ajustes talleres', roles:['admin','shops','staff','visor'],        icon:'M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z' },
+  { to:'/admin',        label:'Admin',          roles:['admin'],                                    icon:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M23 21v-2a4 4 0 1-3-3.87 M16 3.13a4 4 0 0 1 0 7.75' },
 ]
 
 const ROL_BG = { admin:'#E6F1FB', staff:'#E1F5EE', proveedor:'#FAEEDA', visor:'#EAF3DE' }

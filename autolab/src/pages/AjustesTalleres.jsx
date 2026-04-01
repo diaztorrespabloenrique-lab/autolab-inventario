@@ -21,7 +21,8 @@ const CAUSAL_CFG = {
 
 export default function AjustesTalleres() {
   const { perfil } = useAuth()
-  const canEdit = ['admin','shops'].includes(perfil?.rol)
+  const canEdit   = ['admin','shops'].includes(perfil?.rol)
+  const canView   = ['admin','shops','staff','visor'].includes(perfil?.rol)
 
   const [ajustes,  setAjustes]  = useState([])
   const [talleres, setTalleres] = useState([])
@@ -95,8 +96,8 @@ export default function AjustesTalleres() {
     String(getISOWeek(new Date(a.fecha_generado + 'T12:00:00')))
   ))].sort((a,b) => Number(b)-Number(a))
 
-  if (!canEdit) return (
-    <div style={{padding:20,color:'#aaa'}}>Acceso solo para administradores y usuarios Shops.</div>
+  if (!canView) return (
+    <div style={{padding:20,color:'#aaa'}}>Sin acceso a este módulo.</div>
   )
   if (loading) return <div style={{padding:20,color:'#aaa'}}>Cargando ajustes...</div>
 
@@ -268,7 +269,11 @@ export default function AjustesTalleres() {
 
                     {/* Confirmado en sistema */}
                     <td style={td}>
-                      {a.confirmado ? (
+                      {!canEdit ? (
+                        a.confirmado
+                          ? <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#DCFCE7', color:'#166534'}}>✅ Cargado</span>
+                          : <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, background:'#F1EFE8', color:'#888'}}>⏳ Pendiente</span>
+                      ) : a.confirmado ? (
                         <div style={{display:'flex', flexDirection:'column', gap:4}}>
                           <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500,
                             background:'#DCFCE7', color:'#166534'}}>

@@ -9,6 +9,7 @@ import Pedidos from './pages/Pedidos'
 import Admin from './pages/Admin'
 import ValorInventario from './pages/ValorInventario'
 import Homologacion from './pages/Homologacion'
+import AjustesTalleres from './pages/AjustesTalleres'
 
 function RequireAuth({ children, roles }) {
   const { user, perfil, loading } = useAuth()
@@ -26,11 +27,12 @@ export default function App() {
       <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<Dashboard />} />
         <Route path="conteos"       element={<Conteos />} />
-        <Route path="kardex"        element={<RequireAuth roles={['admin','staff','visor']}><Kardex /></RequireAuth>} />
-        <Route path="pedidos"       element={<RequireAuth roles={['admin','staff','visor']}><Pedidos /></RequireAuth>} />
-        <Route path="valor"         element={<RequireAuth roles={['admin','staff','visor']}><ValorInventario /></RequireAuth>} />
-        <Route path="homologacion"  element={<RequireAuth roles={['admin','staff','visor']}><Homologacion /></RequireAuth>} />
-        <Route path="admin"         element={<RequireAuth roles={['admin']}><Admin /></RequireAuth>} />
+	<Route path="kardex"        element={<RequireAuth roles={['admin','staff','visor','shops']}><Kardex /></RequireAuth>} />
+	<Route path="pedidos"       element={<RequireAuth roles={['admin','staff','visor','shops']}><Pedidos /></RequireAuth>} />
+	<Route path="valor"         element={<RequireAuth roles={['admin','staff','visor','shops']}><ValorInventario /></RequireAuth>} />
+	<Route path="homologacion"  element={<RequireAuth roles={['admin','staff','visor','shops']}><Homologacion /></RequireAuth>} />
+	<Route path="ajustes-taller" element={<RequireAuth roles={['admin','shops','staff','visor']}><AjustesTalleres /></RequireAuth>} />
+	<Route path="admin"         element={<RequireAuth roles={['admin']}><Admin /></RequireAuth>} />
       </Route>
     </Routes>
   )

@@ -676,12 +676,25 @@ export function TabModelos() {
   }
 
   function toggleSku(sku_id) {
-    setForm(f => ({
-      ...f,
-      skus_sel: f.skus_sel.includes(sku_id)
-        ? f.skus_sel.filter(id => id !== sku_id)
-        : [...f.skus_sel, sku_id]
-    }))
+    const sku = skus.find(s => s.id === sku_id)
+    if (!sku) return
+    const esBat = sku.codigo.toUpperCase().includes('BAT')
+
+    setForm(f => {
+      if (f.skus_sel.includes(sku_id)) {
+        // Deseleccionar
+        return { ...f, skus_sel: f.skus_sel.filter(id => id !== sku_id) }
+      } else {
+        // Seleccionar: quitar el anterior del mismo tipo (llanta o batería) y agregar el nuevo
+        const sinMismoTipo = f.skus_sel.filter(id => {
+          const s = skus.find(x => x.id === id)
+          if (!s) return true
+          const esBatAnterior = s.codigo.toUpperCase().includes('BAT')
+          return esBatAnterior !== esBat  // solo conservar los del otro tipo
+        })
+        return { ...f, skus_sel: [...sinMismoTipo, sku_id] }
+      }
+    })
   }
 
   async function guardar() {
@@ -796,12 +809,18 @@ export function TabModelos() {
 
             <div style={{marginBottom:14}}>
               <label style={{fontSize:11, color:'#666', display:'block', marginBottom:8}}>
-                SKUs asociados <span style={{color:'#aaa', fontSize:10}}>({form.skus_sel.length} seleccionados)</span>
+                SKUs asociados <span style={{color:'#aaa', fontSize:10}}>(1 llanta + 1 batería máximo)</span>
               </label>
               <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:4}}>
                 {['Llantas','Baterías'].map(tipo => {
                   const esBat = tipo === 'Baterías'
-                  const lista = skus.filter(s => s.codigo.toUpperCase().includes('BAT') === esBat)
+                  const lista = skus.filter(s => {
+                    const cod = s.codigo.toUpperCase()
+                    const esBateria = cod.includes('BAT')
+                    const esCasco   = cod.includes('CASCO')
+                    if (esCasco) return false          // nunca mostrar cascos
+                    return esBateria === esBat
+                  })
                   return (
                     <div key={tipo}>
                       <p style={{fontSize:10, fontWeight:500, color:'#888', marginBottom:6, textTransform:'uppercase'}}>{tipo}</p>

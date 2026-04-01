@@ -118,10 +118,28 @@ export default function Conteos() {
       if (detErr) console.error('Error guardando detalle:', detErr.message)
     }
 
-    // Generar ajustes automáticos para diferencias negativas
+    // Generar ajustes en módulo de ajustes a talleres (diferencias negativas)
     if (detalles.some(d => d.diferencia < 0)) {
       const { error:ajErr } = await supabase.rpc('generar_ajuste_desde_conteo', { p_conteo_id: conteo.id })
-      if (ajErr) console.error('Error generando ajustes:', ajErr.message)
+      if (ajErr) console.error('Error generando ajuste a taller:', ajErr.message)
+    }
+
+    // Crear movimientos de ajuste en Kardex por TODAS las diferencias (+ y -)
+    const diferenciasKardex = detalles.filter(d => d.diferencia !== 0)
+    for (const det of diferenciasKardex) {
+      const esDec = det.diferencia < 0
+      await supabase.from('movimientos').insert({
+        taller_id:         conteo.taller_id,
+        sku_id:            det.sku_id,
+        tipo:              'ajuste',
+        ajuste_tipo:       esDec ? 'decremento' : 'incremento',
+        cantidad:          Math.abs(det.diferencia),
+        fecha:             conteo.fecha,
+        fuente:            'manual',
+        estado_aprobacion: 'pendiente',
+        usuario_id:        perfil?.id,
+        notas:             `Ajuste por conteo #${conteo.numero_conteo ?? ''} — diferencia: ${det.diferencia > 0 ? '+' : ''}${det.diferencia}`,
+      })
     }
 
     setModal(false); setForm(initForm); setSkuCounts([]); load()
@@ -231,8 +249,14 @@ export default function Conteos() {
                   </td>
                   <td style={td}>
                     {c.foto_url
-                      ? <a href={c.foto_url} target="_blank" rel="noreferrer"
-                          style={{fontSize:11, color:'#1a4f8a'}}>Ver foto</a>
+                      ? <div style={{display:'flex', flexDirection:'column', gap:4, alignItems:'center'}}>
+                          <a href={c.foto_url} target="_blank" rel="noreferrer">
+                            <img src={c.foto_url} alt="Evidencia"
+                              style={{width:48, height:48, objectFit:'cover', borderRadius:6, border:'0.5px solid #e0dfd8', cursor:'pointer'}}
+                              onError={e=>{ e.target.style.display='none'; e.target.nextSibling.style.display='block' }}/>
+                            <span style={{display:'none', fontSize:10, color:'#1a4f8a'}}>Ver foto ↗</span>
+                          </a>
+                        </div>
                       : <span style={{color:'#ccc'}}>—</span>}
                   </td>
                   <td style={{...td, color:'#888', maxWidth:200, fontSize:11}}>{c.notas||<span style={{color:'#ccc'}}>—</span>}</td>

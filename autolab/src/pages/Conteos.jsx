@@ -18,9 +18,10 @@ export default function Conteos() {
   const [inv,      setInv]      = useState([])
   const [loading,  setLoading]  = useState(true)
 
-  const [modal,     setModal]     = useState(false)
-  const [saving,    setSaving]    = useState(false)
-  const [expandido, setExpandido] = useState(null)
+  const [modal,       setModal]       = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [expandido,   setExpandido]   = useState(null)
+  const [confirmElim, setConfirmElim] = useState(null)
 
   const initForm = { taller_id:'', notas:'', foto:null }
   const [form,      setForm]      = useState(initForm)
@@ -66,6 +67,12 @@ export default function Conteos() {
     setSkuCounts(prev => prev.map((it, i) =>
       i === idx ? { ...it, cantidad_fisica: val === '' ? '' : Math.max(0, parseInt(val) || 0) } : it
     ))
+  }
+
+  async function eliminarConteo(id) {
+    const { error } = await supabase.from('conteos').delete().eq('id', id)
+    if (error) alert('Error al eliminar: ' + error.message)
+    setConfirmElim(null); load()
   }
 
   async function handleGuardar() {
@@ -151,6 +158,7 @@ export default function Conteos() {
             <th style={th}>Ajuste generado</th>
             <th style={th}>Foto</th>
             <th style={th}>Notas</th>
+            {canWrite && <th style={th}>Acc.</th>}
           </tr></thead>
           <tbody>
             {conteos.length===0 && (
@@ -228,12 +236,42 @@ export default function Conteos() {
                       : <span style={{color:'#ccc'}}>—</span>}
                   </td>
                   <td style={{...td, color:'#888', maxWidth:200, fontSize:11}}>{c.notas||<span style={{color:'#ccc'}}>—</span>}</td>
+                  {canWrite && (
+                    <td style={td}>
+                      <button onClick={()=>setConfirmElim(c)}
+                        style={{background:'#FCEBEB', color:'#A32D2D', border:'none', borderRadius:6, padding:'3px 9px', fontSize:11, cursor:'pointer'}}>
+                        Eliminar
+                      </button>
+                    </td>
+                  )}
                 </tr>
               )
             })}
           </tbody>
         </table>
       </div>
+
+      {/* Modal confirmar eliminación */}
+      {confirmElim && canWrite && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:400}}>
+            <p style={{fontWeight:500, marginBottom:8}}>¿Eliminar conteo #{confirmElim.numero_conteo} — {confirmElim.talleres?.nombre}?</p>
+            <div style={{background:'#FEF9C3', borderRadius:7, padding:'8px 12px', marginBottom:16, fontSize:11, color:'#854D0E'}}>
+              ⚠ Se eliminarán también el detalle del conteo y los ajustes generados automáticamente por este conteo.
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmElim(null)}
+                style={{padding:'5px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={()=>eliminarConteo(confirmElim.id)}
+                style={{background:'#DC2626', color:'white', border:'none', borderRadius:7, padding:'5px 14px', fontSize:12, cursor:'pointer', fontWeight:500}}>
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal registrar conteo */}
       {modal && canWrite && (

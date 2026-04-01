@@ -28,6 +28,7 @@ export default function AjustesTalleres() {
   const [talleres, setTalleres] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [saving,   setSaving]   = useState(null)
+  const [confirmElim, setConfirmElim] = useState(null)
 
   const [fTaller,  setFTaller]  = useState('')
   const [fCausal,  setFCausal]  = useState('')
@@ -52,6 +53,12 @@ export default function AjustesTalleres() {
     setAjustes(a ?? [])
     setTalleres(t ?? [])
     setLoading(false)
+  }
+
+  async function eliminarAjuste(id) {
+    const { error } = await supabase.from('ajustes_taller').delete().eq('id', id)
+    if (error) alert('Error: ' + error.message)
+    setConfirmElim(null); load()
   }
 
   async function confirmar(ajuste) {
@@ -196,6 +203,7 @@ export default function AjustesTalleres() {
                 <th style={th}>Cargado en sistema</th>
                 <th style={th}>Fecha carga</th>
                 <th style={th}>Confirmado por</th>
+                {canEdit && <th style={th}></th>}
               </tr>
             </thead>
             <tbody>
@@ -304,6 +312,16 @@ export default function AjustesTalleres() {
                     <td style={{...td, fontSize:11, color:'#888'}}>
                       {a.confirmador?.nombre ?? <span style={{color:'#ccc'}}>—</span>}
                     </td>
+                    {canEdit && (
+                      <td style={td}>
+                        {!a.confirmado && (
+                          <button onClick={()=>setConfirmElim(a)}
+                            style={{background:'#FCEBEB', color:'#A32D2D', border:'none', borderRadius:6, padding:'3px 9px', fontSize:11, cursor:'pointer'}}>
+                            Eliminar
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -324,6 +342,30 @@ export default function AjustesTalleres() {
           </table>
         </div>
       </div>
+      {/* Modal confirmar eliminación */}
+      {confirmElim && canEdit && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:400}}>
+            <p style={{fontWeight:500, marginBottom:8}}>¿Eliminar ajuste #{confirmElim.numero}?</p>
+            <p style={{fontSize:12, color:'#888', marginBottom:14}}>
+              {confirmElim.talleres?.nombre} · {confirmElim.fecha_generado}
+            </p>
+            <div style={{background:'#FEF9C3', borderRadius:7, padding:'8px 12px', marginBottom:16, fontSize:11, color:'#854D0E'}}>
+              ⚠ Solo se pueden eliminar ajustes que no han sido confirmados en el sistema.
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmElim(null)}
+                style={{padding:'5px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={()=>eliminarAjuste(confirmElim.id)}
+                style={{background:'#DC2626', color:'white', border:'none', borderRadius:7, padding:'5px 14px', fontSize:12, cursor:'pointer', fontWeight:500}}>
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

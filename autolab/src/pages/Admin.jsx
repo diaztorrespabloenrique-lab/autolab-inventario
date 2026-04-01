@@ -808,11 +808,11 @@ export function TabModelos() {
                       {lista.map(s => {
                         const sel = form.skus_sel.includes(s.id)
                         return (
-                          <label key={s.id} onClick={()=>toggleSku(s.id)}
+                          <label key={s.id}
                             style={{display:'flex', alignItems:'center', gap:7, padding:'5px 8px', borderRadius:7, marginBottom:3, cursor:'pointer',
                               background:sel?(esBat?'#FEF9C3':'#DCFCE7'):'#f9f9f7',
                               border:`1px solid ${sel?(esBat?'#FCD34D':'#86EFAC'):'#e0dfd8'}`}}>
-                            <input type="checkbox" checked={sel} onChange={()=>{}} style={{pointerEvents:'none'}}/>
+                            <input type="checkbox" checked={sel} onChange={()=>toggleSku(s.id)}/>
                             <span style={{fontSize:11, fontFamily:'monospace', fontWeight:sel?500:400, color:sel?(esBat?'#854D0E':'#166534'):'#444'}}>
                               {s.codigo}
                             </span>

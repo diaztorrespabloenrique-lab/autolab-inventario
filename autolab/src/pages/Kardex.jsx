@@ -161,13 +161,17 @@ export default function Kardex() {
 
   // Filtrar OCs que contienen el taller+SKU seleccionado
   function ocsFiltradas() {
-    // Excluir siempre las OCs con recepción completa
+    // Excluir siempre las OCs completas
     const disponibles = pedidosOC.filter(oc => !ocCompletas.has(oc.id))
-    if (!form.taller_id || !form.sku_id) return disponibles
-    return disponibles.filter(oc => {
-      const items = Array.isArray(oc.items) ? oc.items : []
-      return items.some(it => it.taller_id === form.taller_id && it.sku_id === form.sku_id)
-    })
+    // Si hay taller Y sku, filtrar además por coincidencia de ítems
+    if (form.taller_id && form.sku_id) {
+      const conMatch = disponibles.filter(oc => {
+        const items = Array.isArray(oc.items) ? oc.items : []
+        return items.some(it => it.taller_id === form.taller_id && it.sku_id === form.sku_id)
+      })
+      return conMatch  // puede estar vacío — el mensaje "no hay OCs" aparece en ese caso
+    }
+    return disponibles
   }
 
   const movsFiltrados = movs.filter(m => {
@@ -703,7 +707,7 @@ export default function Kardex() {
                   <select style={{ ...inp, border: form.pedido_id?'1.5px solid #86EFAC':'0.5px solid #ccc' }}
                     value={form.pedido_id} onChange={e => onSelectOC(e.target.value)}>
                     <option value="">— Sin vincular a OC —</option>
-                    {(form.taller_id && form.sku_id ? ocsFiltradas() : pedidosOC).map(oc => (
+                    {ocsFiltradas().map(oc => (
                       <option key={oc.id} value={oc.id}>
                         OC-{oc.numero_oc} · {oc.proveedores?.nombre ?? ''}
                       </option>

@@ -61,6 +61,22 @@ export default function AjustesTalleres() {
     setConfirmElim(null); load()
   }
 
+  async function marcarNoProcede(ajuste) {
+    setSaving(ajuste.id)
+    const { error } = await supabase.from('ajustes_taller').update({
+      no_procede: true,
+      confirmado: false,
+    }).eq('id', ajuste.id)
+    if (error) alert('Error: ' + error.message)
+    setSaving(null); load()
+  }
+
+  async function deshacerNoProcede(ajuste) {
+    setSaving(ajuste.id)
+    await supabase.from('ajustes_taller').update({ no_procede: false }).eq('id', ajuste.id)
+    setSaving(null); load()
+  }
+
   async function confirmar(ajuste) {
     setSaving(ajuste.id)
     const { error } = await supabase.from('ajustes_taller').update({
@@ -86,8 +102,9 @@ export default function AjustesTalleres() {
   const ajustesFilt = ajustes.filter(a => {
     if (fTaller  && a.taller_id !== fTaller)  return false
     if (fCausal  && a.causal    !== fCausal)  return false
-    if (fConfirm === 'si' && !a.confirmado)   return false
-    if (fConfirm === 'no' &&  a.confirmado)   return false
+    if (fConfirm === 'si'       && !a.confirmado)        return false
+    if (fConfirm === 'no'       && (a.confirmado || a.no_procede)) return false
+    if (fConfirm === 'noprocede' && !a.no_procede)         return false
     if (fSemana) {
       const sem = getISOWeek(new Date(a.fecha_generado + 'T12:00:00'))
       if (String(sem) !== fSemana) return false
@@ -95,7 +112,7 @@ export default function AjustesTalleres() {
     return true
   })
 
-  const totalPendiente  = ajustesFilt.filter(a=>!a.confirmado).reduce((s,a)=>s+Number(a.monto_sin_iva||0),0)
+  const totalPendiente  = ajustesFilt.filter(a=>!a.confirmado && !a.no_procede).reduce((s,a)=>s+Number(a.monto_sin_iva||0),0)
   const totalConfirmado = ajustesFilt.filter(a=> a.confirmado).reduce((s,a)=>s+Number(a.monto_sin_iva||0),0)
 
   // Semanas disponibles
@@ -172,6 +189,7 @@ export default function AjustesTalleres() {
             style={{padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:150}}>
             <option value="">Todos</option>
             <option value="no">⏳ Pendiente confirmar</option>
+            <option value="noprocede">🚫 No procede</option>
             <option value="si">✅ Confirmados</option>
           </select>
         </div>
@@ -278,15 +296,25 @@ export default function AjustesTalleres() {
                     {/* Confirmado en sistema */}
                     <td style={td}>
                       {!canEdit ? (
-                        a.confirmado
-                          ? <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#DCFCE7', color:'#166534'}}>✅ Cargado</span>
-                          : <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, background:'#F1EFE8', color:'#888'}}>⏳ Pendiente</span>
+                        a.no_procede
+                          ? <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#F1EFE8', color:'#5F5E5A'}}>🚫 No procede</span>
+                          : a.confirmado
+                            ? <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#DCFCE7', color:'#166534'}}>✅ Cargado</span>
+                            : <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, background:'#FEF9C3', color:'#854D0E'}}>⏳ Pendiente</span>
+                      ) : a.no_procede ? (
+                        <div style={{display:'flex', flexDirection:'column', gap:4}}>
+                          <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500,
+                            background:'#F1EFE8', color:'#5F5E5A'}}>🚫 No procede</span>
+                          <button onClick={()=>deshacerNoProcede(a)} disabled={saving===a.id}
+                            style={{fontSize:9, padding:'1px 6px', border:'0.5px solid #ccc',
+                              borderRadius:5, cursor:'pointer', background:'white', color:'#888'}}>
+                            Deshacer
+                          </button>
+                        </div>
                       ) : a.confirmado ? (
                         <div style={{display:'flex', flexDirection:'column', gap:4}}>
                           <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500,
-                            background:'#DCFCE7', color:'#166534'}}>
-                            ✅ Cargado
-                          </span>
+                            background:'#DCFCE7', color:'#166534'}}>✅ Cargado</span>
                           <button onClick={()=>desconfirmar(a)} disabled={saving===a.id}
                             style={{fontSize:9, padding:'1px 6px', border:'0.5px solid #ccc',
                               borderRadius:5, cursor:'pointer', background:'white', color:'#888'}}>
@@ -294,12 +322,20 @@ export default function AjustesTalleres() {
                           </button>
                         </div>
                       ) : (
-                        <button onClick={()=>confirmar(a)} disabled={saving===a.id}
-                          style={{padding:'4px 10px', background:'#1a4f8a', color:'white',
-                            border:'none', borderRadius:7, fontSize:11, cursor:'pointer',
-                            fontWeight:500, opacity:saving===a.id?0.6:1, whiteSpace:'nowrap'}}>
-                          {saving===a.id ? '...' : 'Confirmar carga'}
-                        </button>
+                        <div style={{display:'flex', gap:4}}>
+                          <button onClick={()=>confirmar(a)} disabled={saving===a.id}
+                            style={{padding:'4px 9px', background:'#1a4f8a', color:'white',
+                              border:'none', borderRadius:7, fontSize:11, cursor:'pointer',
+                              fontWeight:500, opacity:saving===a.id?0.6:1, whiteSpace:'nowrap'}}>
+                            {saving===a.id ? '...' : 'Confirmar'}
+                          </button>
+                          <button onClick={()=>marcarNoProcede(a)} disabled={saving===a.id}
+                            style={{padding:'4px 9px', background:'#F1EFE8', color:'#5F5E5A',
+                              border:'0.5px solid #ccc', borderRadius:7, fontSize:11, cursor:'pointer',
+                              fontWeight:500, opacity:saving===a.id?0.6:1, whiteSpace:'nowrap'}}>
+                            🚫 No procede
+                          </button>
+                        </div>
                       )}
                     </td>
 

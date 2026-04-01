@@ -125,10 +125,15 @@ export default function Conteos() {
     }
 
     // Crear movimientos de ajuste en Kardex por TODAS las diferencias (+ y -)
+    // Obtener numero_conteo actualizado
+    const { data:conteoFull } = await supabase.from('conteos')
+      .select('numero_conteo').eq('id', conteo.id).single()
+    const numConteo = conteoFull?.numero_conteo ?? ''
+
     const diferenciasKardex = detalles.filter(d => d.diferencia !== 0)
     for (const det of diferenciasKardex) {
       const esDec = det.diferencia < 0
-      await supabase.from('movimientos').insert({
+      const { error: movErr } = await supabase.from('movimientos').insert({
         taller_id:         conteo.taller_id,
         sku_id:            det.sku_id,
         tipo:              'ajuste',
@@ -138,8 +143,9 @@ export default function Conteos() {
         fuente:            'manual',
         estado_aprobacion: 'pendiente',
         usuario_id:        perfil?.id,
-        notas:             `Ajuste por conteo #${conteo.numero_conteo ?? ''} — diferencia: ${det.diferencia > 0 ? '+' : ''}${det.diferencia}`,
+        notas:             `Ajuste por conteo #${numConteo} — diferencia: ${det.diferencia > 0 ? '+' : ''}${det.diferencia}`,
       })
+      if (movErr) console.error('Error creando ajuste kardex:', movErr.message)
     }
 
     setModal(false); setForm(initForm); setSkuCounts([]); load()
@@ -248,16 +254,23 @@ export default function Conteos() {
                     )}
                   </td>
                   <td style={td}>
-                    {c.foto_url
-                      ? <div style={{display:'flex', flexDirection:'column', gap:4, alignItems:'center'}}>
-                          <a href={c.foto_url} target="_blank" rel="noreferrer">
-                            <img src={c.foto_url} alt="Evidencia"
-                              style={{width:48, height:48, objectFit:'cover', borderRadius:6, border:'0.5px solid #e0dfd8', cursor:'pointer'}}
-                              onError={e=>{ e.target.style.display='none'; e.target.nextSibling.style.display='block' }}/>
-                            <span style={{display:'none', fontSize:10, color:'#1a4f8a'}}>Ver foto ↗</span>
-                          </a>
-                        </div>
-                      : <span style={{color:'#ccc'}}>—</span>}
+                    {c.foto_url ? (()=>{
+                      const nombre = c.foto_url.split('/').pop().split('?')[0]
+                      const esImagen = /\.(jpg|jpeg|png|gif|webp)$/i.test(nombre)
+                      return (
+                        <a href={c.foto_url} target="_blank" rel="noreferrer" download
+                          style={{display:'flex', flexDirection:'column', alignItems:'center', gap:3, textDecoration:'none'}}>
+                          {esImagen
+                            ? <img src={c.foto_url} alt="Evidencia"
+                                style={{width:44, height:44, objectFit:'cover', borderRadius:6, border:'0.5px solid #e0dfd8'}}/>
+                            : <span style={{fontSize:20}}>📎</span>
+                          }
+                          <span style={{fontSize:9, color:'#1a4f8a', textAlign:'center', maxWidth:60, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                            {esImagen ? 'Ver ↗' : 'Descargar ↗'}
+                          </span>
+                        </a>
+                      )
+                    })() : <span style={{color:'#ccc'}}>—</span>}
                   </td>
                   <td style={{...td, color:'#888', maxWidth:200, fontSize:11}}>{c.notas||<span style={{color:'#ccc'}}>—</span>}</td>
                   {canWrite && (
@@ -392,10 +405,15 @@ export default function Conteos() {
 
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14}}>
               <div>
-                <label style={lbl}>Evidencia fotográfica <span style={{color:'#aaa'}}>(opcional)</span></label>
-                <input type="file" accept="image/*"
+                <label style={lbl}>Evidencia / Archivo adjunto <span style={{color:'#aaa'}}>(opcional — imagen, ZIP, PDF)</span></label>
+                <input type="file" accept="image/*,.zip,.pdf,.rar"
                   onChange={e=>setForm(f=>({...f, foto:e.target.files[0]||null}))}
                   style={{...inp, padding:'4px'}}/>
+                {form.foto && (
+                  <p style={{fontSize:10, color:'#888', marginTop:3}}>
+                    📎 {form.foto.name} ({(form.foto.size/1024).toFixed(0)} KB)
+                  </p>
+                )}
               </div>
               <div>
                 <label style={lbl}>Notas <span style={{color:'#aaa'}}>(opcional)</span></label>

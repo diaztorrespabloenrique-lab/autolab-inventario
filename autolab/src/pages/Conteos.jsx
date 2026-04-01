@@ -18,14 +18,12 @@ export default function Conteos() {
   const [inv,      setInv]      = useState([])
   const [loading,  setLoading]  = useState(true)
 
-  const [modal,    setModal]    = useState(false)
-  const [saving,   setSaving]   = useState(false)
-  const [expandido,setExpandido]= useState(null)
+  const [modal,     setModal]     = useState(false)
+  const [saving,    setSaving]    = useState(false)
+  const [expandido, setExpandido] = useState(null)
 
   const initForm = { taller_id:'', notas:'', foto:null }
-  const [form, setForm] = useState(initForm)
-
-  // Detalle de SKUs para el conteo actual
+  const [form,      setForm]      = useState(initForm)
   const [skuCounts, setSkuCounts] = useState([])
 
   useEffect(() => { load() }, [])
@@ -33,7 +31,7 @@ export default function Conteos() {
   async function load() {
     const [{ data:c }, { data:t }, { data:s }, { data:i }] = await Promise.all([
       supabase.from('conteos')
-        .select('*, talleres(nombre,region), perfiles(nombre), conteo_detalle(*, skus(codigo))')
+        .select('*, numero_conteo, talleres(nombre,region), perfiles(nombre), conteo_detalle(*, skus(codigo))')
         .order('created_at', { ascending:false }),
       supabase.from('talleres').select('*').eq('activo',true).order('nombre'),
       supabase.from('skus').select('*').eq('activo',true).order('codigo'),
@@ -49,17 +47,16 @@ export default function Conteos() {
     setModal(true)
   }
 
-  // Cuando cambia el taller, cargar SKUs del inventario de ese taller con sus cantidades
   function onChangeTaller(taller_id) {
     setForm(f => ({ ...f, taller_id }))
     if (!taller_id) { setSkuCounts([]); return }
     const items = skus.map(s => {
       const registro = inv.find(r => r.taller_id === taller_id && r.sku_id === s.id)
       return {
-        sku_id:   s.id,
-        sku_cod:  s.codigo,
+        sku_id:           s.id,
+        sku_cod:          s.codigo,
         cantidad_sistema: registro?.cantidad ?? 0,
-        cantidad_fisica:  '',  // el usuario llena esto
+        cantidad_fisica:  '',
       }
     })
     setSkuCounts(items)
@@ -75,7 +72,7 @@ export default function Conteos() {
     if (!form.taller_id) { alert('Selecciona el taller'); return }
     setSaving(true)
 
-    // 1. Subir foto si hay
+    // Subir foto
     let foto_url = null
     if (form.foto) {
       const ext  = form.foto.name.split('.').pop()
@@ -87,18 +84,18 @@ export default function Conteos() {
       }
     }
 
-    // 2. Crear el conteo
+    // Crear el conteo
     const { data:conteo, error:conteoErr } = await supabase.from('conteos').insert({
-      taller_id:    form.taller_id,
-      notas:        form.notas || null,
+      taller_id:  form.taller_id,
+      notas:      form.notas || null,
       foto_url,
-      usuario_id:   perfil?.id,
-      fecha:        new Date().toISOString().split('T')[0],
+      usuario_id: perfil?.id,
+      fecha:      new Date().toISOString().split('T')[0],
     }).select().single()
 
     if (conteoErr) { alert('Error: ' + conteoErr.message); setSaving(false); return }
 
-    // 3. Guardar detalle por SKU (solo los que tienen cantidad física registrada)
+    // Guardar detalle por SKU
     const detalles = skuCounts
       .filter(it => it.cantidad_fisica !== '' && it.cantidad_fisica !== null)
       .map(it => ({
@@ -112,6 +109,12 @@ export default function Conteos() {
     if (detalles.length > 0) {
       const { error:detErr } = await supabase.from('conteo_detalle').insert(detalles)
       if (detErr) console.error('Error guardando detalle:', detErr.message)
+    }
+
+    // Generar ajustes automáticos para diferencias negativas
+    if (detalles.some(d => d.diferencia < 0)) {
+      const { error:ajErr } = await supabase.rpc('generar_ajuste_desde_conteo', { p_conteo_id: conteo.id })
+      if (ajErr) console.error('Error generando ajustes:', ajErr.message)
     }
 
     setModal(false); setForm(initForm); setSkuCounts([]); load()
@@ -128,32 +131,41 @@ export default function Conteos() {
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16}}>
         <div>
           <h1 style={{fontSize:17, fontWeight:500}}>Conteos de inventario</h1>
-          <p style={{fontSize:11, color:'#888', marginTop:2}}>{conteos.length} conteos registrados</p>
+          <p style={{fontSize:11, color:'#888', marginTop:2}}>{conteos.length} conteos registrados · Las diferencias negativas generan ajustes automáticos al taller</p>
         </div>
         {canWrite && (
           <button onClick={abrirModal} style={btn()}>+ Registrar conteo</button>
         )}
       </div>
 
-      {/* ── Tabla de conteos ── */}
+      {/* Tabla de conteos */}
       <div style={{background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden'}}>
         <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
           <thead><tr>
-            <th style={th}>Fecha</th><th style={th}>Taller</th><th style={th}>Registró</th>
-            <th style={th}>SKUs contados</th><th style={th}>Diferencias</th>
-            <th style={th}>Foto</th><th style={th}>Notas</th>
+            <th style={th}>#</th>
+            <th style={th}>Fecha</th>
+            <th style={th}>Taller</th>
+            <th style={th}>Registró</th>
+            <th style={th}>SKUs contados</th>
+            <th style={th}>Diferencias</th>
+            <th style={th}>Ajuste generado</th>
+            <th style={th}>Foto</th>
+            <th style={th}>Notas</th>
           </tr></thead>
           <tbody>
             {conteos.length===0 && (
-              <tr><td colSpan={7} style={{padding:32, textAlign:'center', color:'#aaa'}}>No hay conteos registrados</td></tr>
+              <tr><td colSpan={9} style={{padding:32, textAlign:'center', color:'#aaa'}}>No hay conteos registrados</td></tr>
             )}
             {conteos.map(c => {
               const detalle   = c.conteo_detalle ?? []
               const conDif    = detalle.filter(d => d.diferencia !== 0)
-              const hasDif    = conDif.length > 0
-
+              const negativas = detalle.filter(d => d.diferencia < 0)
               return (
                 <tr key={c.id}>
+                  {/* Número conteo */}
+                  <td style={{...td, fontWeight:500, color:'#1a4f8a', fontSize:11}}>
+                    {c.numero_conteo ? `#${c.numero_conteo}` : '—'}
+                  </td>
                   <td style={td}>{c.fecha}</td>
                   <td style={{...td, fontWeight:500}}>{c.talleres?.nombre}</td>
                   <td style={{...td, color:'#888'}}>{c.perfiles?.nombre}</td>
@@ -189,12 +201,24 @@ export default function Conteos() {
                     )}
                   </td>
                   <td style={td}>
-                    {hasDif ? (
-                      <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500, background:'#FCEBEB', color:'#A32D2D'}}>
-                        ⚠ {conDif.length} diferencias
+                    {conDif.length > 0 ? (
+                      <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500,
+                        background:'#FCEBEB', color:'#A32D2D'}}>
+                        ⚠ {conDif.length} diferencia{conDif.length>1?'s':''}
                       </span>
                     ) : (
                       <span style={{color:'#ccc', fontSize:11}}>Sin diferencias</span>
+                    )}
+                  </td>
+                  {/* Indicador de ajuste generado */}
+                  <td style={td}>
+                    {negativas.length > 0 ? (
+                      <span style={{padding:'2px 8px', borderRadius:20, fontSize:10, fontWeight:500,
+                        background:'#FEF9C3', color:'#854D0E'}}>
+                        📋 {negativas.length} ajuste{negativas.length>1?'s':''}
+                      </span>
+                    ) : (
+                      <span style={{color:'#ccc', fontSize:11}}>—</span>
                     )}
                   </td>
                   <td style={td}>
@@ -211,7 +235,7 @@ export default function Conteos() {
         </table>
       </div>
 
-      {/* ── Modal registrar conteo ── */}
+      {/* Modal registrar conteo */}
       {modal && canWrite && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>
           <div style={{background:'white', borderRadius:14, padding:20, width:'100%', maxWidth:640, maxHeight:'92vh', overflowY:'auto'}}>
@@ -221,7 +245,6 @@ export default function Conteos() {
                 style={{background:'none', border:'0.5px solid #ccc', borderRadius:7, padding:'3px 10px', cursor:'pointer'}}>✕</button>
             </div>
 
-            {/* Taller */}
             <div style={{marginBottom:12}}>
               <label style={lbl}>Taller *</label>
               <select style={inp} value={form.taller_id} onChange={e=>onChangeTaller(e.target.value)}>
@@ -230,13 +253,18 @@ export default function Conteos() {
               </select>
             </div>
 
-            {/* Tabla de conteo por SKU */}
             {form.taller_id && skuCounts.length > 0 && (
               <div style={{marginBottom:14}}>
                 <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
                   <p style={{fontSize:12, fontWeight:500}}>Conteo físico por SKU</p>
                   <p style={{fontSize:11, color:'#888'}}>Deja vacío los SKUs que no contaste</p>
                 </div>
+
+                {/* Aviso de ajuste automático */}
+                <div style={{background:'#FEF9C3', borderRadius:7, padding:'7px 10px', marginBottom:10, fontSize:11, color:'#854D0E'}}>
+                  ⚠ Las diferencias <strong>negativas</strong> generarán automáticamente un ajuste en el módulo de Ajustes a talleres al guardar el conteo.
+                </div>
+
                 <div style={{background:'#f9f9f7', borderRadius:8, overflow:'hidden', border:'0.5px solid #e0dfd8'}}>
                   <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
                     <thead><tr style={{background:'#f5f5f3'}}>
@@ -273,13 +301,15 @@ export default function Conteos() {
                   </table>
                 </div>
 
-                {/* Resumen de diferencias en tiempo real */}
                 {contadosConDif.length > 0 && (
                   <div style={{marginTop:10, background: diferencias.length>0?'#FCEBEB':'#EAF3DE',
                     borderRadius:8, padding:'10px 14px', fontSize:12}}>
                     {diferencias.length > 0 ? (
                       <div>
-                        <span style={{color:'#A32D2D', fontWeight:500}}>⚠ {diferencias.length} diferencias encontradas:</span>
+                        <span style={{color:'#A32D2D', fontWeight:500}}>
+                          ⚠ {diferencias.length} diferencia{diferencias.length>1?'s':''} · {diferencias.filter(d=>Number(d.cantidad_fisica)<d.cantidad_sistema).length} negativa{diferencias.filter(d=>Number(d.cantidad_fisica)<d.cantidad_sistema).length>1?'s':''}
+                          {diferencias.some(d=>Number(d.cantidad_fisica)<d.cantidad_sistema) && ' → se generarán ajustes automáticos'}
+                        </span>
                         <div style={{marginTop:6, display:'flex', flexWrap:'wrap', gap:6}}>
                           {diferencias.map(d=>(
                             <span key={d.sku_id} style={{padding:'2px 8px', borderRadius:20, fontSize:11,
@@ -298,7 +328,6 @@ export default function Conteos() {
               </div>
             )}
 
-            {/* Foto y notas */}
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14}}>
               <div>
                 <label style={lbl}>Evidencia fotográfica <span style={{color:'#aaa'}}>(opcional)</span></label>

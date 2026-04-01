@@ -72,7 +72,7 @@ export default function Kardex() {
           marca, placa, es_garantia, precio_unitario, precio_total,
           uuid_factura, usuario_id, proveedor_id, taller_origen_id,
           appointment_id, fuente, estado_aprobacion, aprobado_por,
-          pedido_id, ajuste_tipo, created_at,
+          pedido_id, ajuste_tipo, proveedor_sistema, valor_shop, created_at,
           talleres!movimientos_taller_id_fkey(nombre, region),
           skus(codigo),
           proveedores(nombre),
@@ -237,7 +237,13 @@ export default function Kardex() {
       aprobado_por:      perfil?.id,
       fecha_aprobacion:  new Date().toISOString(),
     }).eq('id', mov.id)
-    if (error) alert('Error: ' + error.message)
+    if (error) { alert('Error: ' + error.message); return }
+
+    // Si se aprueba una salida del sistema con proveedor shop → generar ajuste a taller
+    if (accion === 'aprobado' && mov.tipo === 'salida' && mov.fuente === 'sistema') {
+      await supabase.rpc('generar_ajuste_desde_salida_shop', { p_mov_id: mov.id })
+    }
+
     setConfirmApr(null); load()
   }
 
@@ -777,6 +783,15 @@ export default function Kardex() {
                 </span>
               )}
             </p>
+            {/* Aviso si es salida de taller (shop) — genera ajuste automático */}
+            {confirmApr.accion === 'aprobado' &&
+             confirmApr.mov.tipo === 'salida' &&
+             confirmApr.mov.fuente === 'sistema' &&
+             confirmApr.mov.proveedor_sistema?.toLowerCase().includes('shop') && (
+              <div style={{ background:'#FEF9C3', borderRadius:7, padding:'8px 10px', fontSize:11, color:'#854D0E', marginBottom:12 }}>
+                📋 Esta salida fue suministrada por el taller. Al aprobar se generará un <strong>ajuste automático</strong> en el módulo de Ajustes a talleres.
+              </div>
+            )}
             {confirmApr.accion==='aprobado' ? (
               <div style={{ background:'#EAF3DE', borderRadius:7, padding:'8px 10px', fontSize:11, color:'#166534', marginBottom:16 }}>
                 ✅ Se descontarán <strong>{confirmApr.mov.cantidad} unidad{confirmApr.mov.cantidad>1?'es':''}</strong> del inventario.

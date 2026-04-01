@@ -416,9 +416,9 @@ function TabUsuarios() {
 
   if (loading) return <div style={{color:'#aaa', fontSize:13}}>Cargando...</div>
 
-  const ROLES = { admin:'Administrador', staff:'Staff', proveedor:'Proveedor', visor:'Visor' }
-  const ROL_COLORS = { admin:'#FCEBEB', staff:'#E6F1FB', proveedor:'#FAEEDA', visor:'#F1EFE8' }
-  const ROL_TC     = { admin:'#A32D2D', staff:'#0C447C', proveedor:'#633806', visor:'#5F5E5A' }
+  const ROLES = { admin:'Administrador', staff:'Staff', proveedor:'Proveedor', visor:'Visor', shops:'Shops' }
+  const ROL_COLORS = { admin:'#FCEBEB', staff:'#E6F1FB', proveedor:'#FAEEDA', visor:'#F1EFE8', shops:'#F3E8FF' }
+  const ROL_TC     = { admin:'#A32D2D', staff:'#0C447C', proveedor:'#633806', visor:'#5F5E5A', shops:'#6B21A8' }
 
   return (
     <div>

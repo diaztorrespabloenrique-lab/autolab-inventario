@@ -51,6 +51,7 @@ export default function Pedidos() {
   const [modalAprobar, setModalAprobar] = useState(null)
   const [notasAprob,   setNotasAprob]   = useState('')
   const [expandido,    setExpandido]    = useState(null)
+  const [fTipoLista,   setFTipoLista]   = useState('') // filtro tipo en lista de pedidos
   const [modalFactura, setModalFactura] = useState(null)
   const [uuidFact,     setUuidFact]     = useState('')
   const [confirmDel,   setConfirmDel]   = useState(null)
@@ -469,6 +470,20 @@ export default function Pedidos() {
         </div>
       )}
 
+      {/* ── Filtro lista de pedidos ── */}
+      <div style={{display:'flex', gap:10, alignItems:'center', marginBottom:10}}>
+        <span style={{fontSize:11, color:'#888'}}>Filtrar pedidos:</span>
+        {['','llanta','bateria'].map(tipo => (
+          <button key={tipo} onClick={()=>setFTipoLista(tipo)}
+            style={{padding:'4px 12px', borderRadius:20, fontSize:11, cursor:'pointer',
+              border:`1.5px solid ${fTipoLista===tipo?'#1a4f8a':'#e0dfd8'}`,
+              background:fTipoLista===tipo?'#E6F1FB':'white',
+              color:fTipoLista===tipo?'#0C447C':'#666', fontWeight:fTipoLista===tipo?500:400}}>
+            {tipo===''?'Todos':tipo==='llanta'?'🔵 Llantas':'🟡 Baterías'}
+          </button>
+        ))}
+      </div>
+
       {/* ── Lista pedidos ── */}
       <div style={{background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden'}}>
         <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
@@ -481,7 +496,16 @@ export default function Pedidos() {
             {pedidos.length===0 && (
               <tr><td colSpan={9} style={{padding:32, textAlign:'center', color:'#aaa'}}>No hay pedidos registrados</td></tr>
             )}
-            {pedidos.map(p=>{
+            {pedidos.filter(p => {
+              if (!fTipoLista) return true
+              const items = Array.isArray(p.items) ? p.items : []
+              return items.some(it => {
+                const s = skus.find(x => x.id === it.sku_id)
+                if (!s) return false
+                const esBat = s.codigo.toUpperCase().includes('BAT')
+                return fTipoLista === 'bateria' ? esBat : !esBat
+              })
+            }).map(p=>{
               const ecfg  = ESTADO_CFG[p.estado] ?? ESTADO_CFG.borrador
               const items = Array.isArray(p.items) ? p.items : []
               return (

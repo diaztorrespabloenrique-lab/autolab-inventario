@@ -45,6 +45,7 @@ export default function Kardex() {
   const [editUUID,    setEditUUID]    = useState(null) // solo para entradas antiguas
   const [confirmDel,  setConfirmDel]  = useState(null)
   const [confirmApr,  setConfirmApr]  = useState(null)
+  const [editMarca,   setEditMarca]   = useState(null) // {id, marca}
 
   // Filtros
   const [fTaller,    setFTaller]    = useState('')
@@ -233,6 +234,11 @@ export default function Kardex() {
     const { error } = await supabase.from('movimientos').insert(payload)
     if (error) { alert('Error al guardar: ' + error.message); setSaving(false); return }
     setModal(false); setForm(initForm); await load(); setSaving(false)
+  }
+
+  async function guardarMarca(id, marca) {
+    await supabase.from('movimientos').update({ marca: marca || null }).eq('id', id)
+    setEditMarca(null); load()
   }
 
   async function handleAprobacion(mov, accion) {
@@ -427,7 +433,30 @@ export default function Kardex() {
                         : <span style={{ color:'#ccc' }}>—</span>}
                     </td>
 
-                    <td style={{ ...tds, fontSize:11 }}>{m.marca || <span style={{ color:'#ccc' }}>—</span>}</td>
+                    <td style={tds}>
+                      {canWrite && m.tipo === 'salida' && editMarca?.id === m.id ? (
+                        <div style={{display:'flex', gap:4, alignItems:'center'}}>
+                          <input autoFocus type="text"
+                            defaultValue={m.marca || ''}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter')  guardarMarca(m.id, e.target.value)
+                              if (e.key === 'Escape') setEditMarca(null)
+                            }}
+                            style={{padding:'2px 6px', border:'1.5px solid #1a4f8a', borderRadius:5, fontSize:11, width:90}}/>
+                          <button onClick={e=>guardarMarca(m.id, e.target.previousSibling.value)}
+                            style={{fontSize:10, padding:'2px 6px', background:'#1a4f8a', color:'white', border:'none', borderRadius:4, cursor:'pointer'}}>✓</button>
+                          <button onClick={()=>setEditMarca(null)}
+                            style={{fontSize:10, padding:'2px 5px', background:'none', border:'0.5px solid #ccc', borderRadius:4, cursor:'pointer'}}>✕</button>
+                        </div>
+                      ) : (
+                        <div style={{display:'flex', alignItems:'center', gap:4, cursor: canWrite && m.tipo==='salida' ? 'pointer' : 'default'}}
+                          onClick={() => canWrite && m.tipo==='salida' && setEditMarca({id:m.id, marca:m.marca||''})}>
+                          <span style={{fontSize:11, color: m.marca ? '#333' : '#ccc'}}>
+                            {m.marca || (canWrite && m.tipo==='salida' ? '✎ agregar' : '—')}
+                          </span>
+                        </div>
+                      )}
+                    </td>
                     <td style={tds}>
                       {m.tipo==='salida'
                         ? m.es_garantia
@@ -441,27 +470,51 @@ export default function Kardex() {
                     </td>
                     <td style={tds}>{m.proveedores?.nombre ?? <span style={{ color:'#ccc' }}>—</span>}</td>
                     <td style={{ ...tds, textAlign:'right' }}>
-                      {m.tipo === 'salida' ? (
-                        costoMap[`${m.taller_id}_${m.sku_id}`]
-                          ? <div>
-                              <div style={{fontWeight:500}}>${Number(costoMap[`${m.taller_id}_${m.sku_id}`]).toLocaleString('es-MX',{minimumFractionDigits:2})}</div>
-                              <div style={{fontSize:9, color:'#888'}}>costo prom.</div>
-                            </div>
-                          : <span style={{ color:'#ccc' }}>—</span>
-                      ) : m.precio_unitario
-                        ? `$${Number(m.precio_unitario).toLocaleString('es-MX')}`
-                        : <span style={{ color:'#ccc' }}>—</span>}
+                      {(() => {
+                        // Para salidas: usar precio_unitario si existe, sino costo promedio
+                        if (m.tipo === 'salida' || m.tipo === 'ajuste') {
+                          const pu = m.precio_unitario
+                            ? Number(m.precio_unitario)
+                            : costoMap[`${m.taller_id}_${m.sku_id}`]
+                              ? Number(costoMap[`${m.taller_id}_${m.sku_id}`])
+                              : null
+                          return pu
+                            ? <div><div style={{fontWeight:500}}>${pu.toLocaleString('es-MX',{minimumFractionDigits:2})}</div><div style={{fontSize:9,color:'#888'}}>costo prom.</div></div>
+                            : <span style={{color:'#ccc'}}>—</span>
+                        }
+                        return m.precio_unitario
+                          ? `$${Number(m.precio_unitario).toLocaleString('es-MX')}`
+                          : <span style={{color:'#ccc'}}>—</span>
+                      })()}
                     </td>
                     <td style={{ ...tds, textAlign:'right' }}>
-                      {m.tipo === 'salida' ? (
-                        costoMap[`${m.taller_id}_${m.sku_id}`]
-                          ? <span style={{color:'#A32D2D', fontWeight:500}}>
-                              -${(Number(costoMap[`${m.taller_id}_${m.sku_id}`]) * m.cantidad).toLocaleString('es-MX',{minimumFractionDigits:2})}
-                            </span>
-                          : <span style={{ color:'#ccc' }}>—</span>
-                      ) : m.precio_total
-                        ? `$${Number(m.precio_total).toLocaleString('es-MX')}`
-                        : <span style={{ color:'#ccc' }}>—</span>}
+                      {(() => {
+                        const costo = costoMap[`${m.taller_id}_${m.sku_id}`]
+                          ? Number(costoMap[`${m.taller_id}_${m.sku_id}`]) : null
+                        const pu = m.precio_unitario ? Number(m.precio_unitario) : costo
+                        if (m.tipo === 'salida') {
+                          return pu
+                            ? <span style={{color:'#A32D2D',fontWeight:500}}>-${(pu*m.cantidad).toLocaleString('es-MX',{minimumFractionDigits:2})}</span>
+                            : <span style={{color:'#ccc'}}>—</span>
+                        }
+                        if (m.tipo === 'entrada') {
+                          // movimiento entre talleres: usar costo promedio del taller destino
+                          if (m.origen === 'movimiento' && costo) {
+                            return <span style={{color:'#166534',fontWeight:500}}>+${(costo*m.cantidad).toLocaleString('es-MX',{minimumFractionDigits:2})}</span>
+                          }
+                          return m.precio_total
+                            ? <span style={{color:'#166534'}}>+${Number(m.precio_total).toLocaleString('es-MX',{minimumFractionDigits:2})}</span>
+                            : <span style={{color:'#ccc'}}>—</span>
+                        }
+                        if (m.tipo === 'ajuste') {
+                          return pu
+                            ? <span style={{color:m.ajuste_tipo==='incremento'?'#166534':'#A32D2D',fontWeight:500}}>
+                                {m.ajuste_tipo==='incremento'?'+':'-'}${(pu*m.cantidad).toLocaleString('es-MX',{minimumFractionDigits:2})}
+                              </span>
+                            : <span style={{color:'#ccc'}}>—</span>
+                        }
+                        return <span style={{color:'#ccc'}}>—</span>
+                      })()}
                     </td>
 
                     {/* Estado aprobación — solo sistema */}
@@ -771,6 +824,8 @@ export default function Kardex() {
           </div>
         </div>
       )}
+
+      {/* ── Modal guardado silencioso de marca (no necesita modal, se hace inline) ── */}
 
       {/* ── Modal aprobar/rechazar sistema ── */}
       {confirmApr && canWrite && (

@@ -144,7 +144,7 @@ export default function AjustesTalleres() {
       <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20}}>
         {[
           { label:'Total ajustes',         val:ajustesFilt.length,                             color:'#5F5E5A', bg:'#F1EFE8' },
-          { label:'Pendientes confirmar',  val:ajustesFilt.filter(a=>!a.confirmado).length,   color:'#854D0E', bg:'#FEF9C3' },
+          { label:'Pendientes confirmar',  val:ajustesFilt.filter(a=>!a.confirmado && !a.no_procede).length, color:'#854D0E', bg:'#FEF9C3' },
           { label:'Monto pendiente s/IVA', val:fmt(totalPendiente),                            color:'#991B1B', bg:'#FEE2E2' },
           { label:'Monto confirmado s/IVA',val:fmt(totalConfirmado),                           color:'#166534', bg:'#DCFCE7' },
         ].map(c=>(

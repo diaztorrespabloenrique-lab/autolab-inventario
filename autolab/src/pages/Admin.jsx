@@ -393,9 +393,10 @@ function TabTalleres() {
 function TabUsuarios() {
   const [usuarios, setUsuarios] = useState([])
   const [loading,  setLoading]  = useState(true)
-  const [modal,    setModal]    = useState(false)
-  const [editing,  setEditing]  = useState(null)
-  const [form,     setForm]     = useState({ nombre:'', rol:'staff' })
+  const [modal,      setModal]      = useState(false)
+  const [editing,    setEditing]    = useState(null)
+  const [form,       setForm]       = useState({ nombre:'', rol:'staff' })
+  const [confirmElim,setConfirmElim] = useState(null)
 
   useEffect(()=>{ load() },[])
 
@@ -439,12 +440,38 @@ function TabUsuarios() {
                 </span>
               </td>
               <td style={td}>
-                <button onClick={()=>abrirEditar(u)} style={{...btn(), padding:'3px 10px', fontSize:10}}>Editar rol</button>
+                <div style={{display:'flex', gap:5}}>
+                  <button onClick={()=>abrirEditar(u)} style={{...btn(), padding:'3px 10px', fontSize:10}}>Editar rol</button>
+                  <button onClick={()=>setConfirmElim(u)}
+                    style={{padding:'3px 10px', fontSize:10, border:'0.5px solid #fca5a5', borderRadius:7, cursor:'pointer', background:'#FEF2F2', color:'#991B1B'}}>
+                    Eliminar
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {confirmElim && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:380}}>
+            <p style={{fontWeight:500, marginBottom:8}}>¿Eliminar usuario "{confirmElim.nombre}"?</p>
+            <p style={{fontSize:12, color:'#888', marginBottom:12}}>{confirmElim.email}</p>
+            <div style={{background:'#FEF9C3', borderRadius:7, padding:'8px 12px', marginBottom:16, fontSize:11, color:'#854D0E'}}>
+              ⚠ Solo se elimina el perfil. Para eliminar el acceso completo ve también a Supabase → Authentication → Users.
+            </div>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmElim(null)}
+                style={{padding:'5px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>Cancelar</button>
+              <button onClick={()=>eliminarUsuario(confirmElim.id)}
+                style={{background:'#DC2626', color:'white', border:'none', borderRadius:7, padding:'5px 14px', fontSize:12, cursor:'pointer', fontWeight:500}}>
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modal && (
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20}}>

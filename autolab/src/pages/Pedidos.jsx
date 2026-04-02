@@ -424,8 +424,17 @@ export default function Pedidos() {
                 {skus.map(s=><option key={s.id} value={s.id}>{s.codigo}</option>)}
               </select>
             </div>
-            {(fTallerProp||fSkuProp) && (
-              <button onClick={()=>{setFTallerProp('');setFSkuProp('')}}
+            <div>
+              <div style={{fontSize:10, color:'#888', marginBottom:3}}>Tipo</div>
+              <select value={fTipoProp} onChange={e=>setFTipoProp(e.target.value)}
+                style={{padding:'5px 8px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, minWidth:120}}>
+                <option value="">Todos</option>
+                <option value="llanta">🔵 Llantas</option>
+                <option value="bateria">🟡 Baterías</option>
+              </select>
+            </div>
+            {(fTallerProp||fSkuProp||fTipoProp) && (
+              <button onClick={()=>{setFTallerProp('');setFSkuProp('');setFTipoProp('')}}
                 style={{padding:'5px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:11, background:'white', cursor:'pointer'}}>
                 Limpiar
               </button>

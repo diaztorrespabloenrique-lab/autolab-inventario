@@ -45,6 +45,7 @@ export default function Kardex() {
   const [editUUID,    setEditUUID]    = useState(null) // solo para entradas antiguas
   const [confirmDel,  setConfirmDel]  = useState(null)
   const [confirmApr,  setConfirmApr]  = useState(null)
+  const [motivoRechazo, setMotivoRechazo] = useState(null) // {mov, motivo:'', skuCorrecto:''}
   const [editMarca,   setEditMarca]   = useState(null) // {id, marca}
 
   // Filtros
@@ -239,6 +240,65 @@ export default function Kardex() {
   async function guardarMarca(id, marca) {
     await supabase.from('movimientos').update({ marca: marca || null }).eq('id', id)
     setEditMarca(null); load()
+  }
+
+  // Determinar tipo de SKU para filtrar en rechazo por pieza incorrecta
+  function tipoDeSkuMov(mov) {
+    const sku = skus.find(s => s.id === mov.sku_id)
+    if (!sku) return 'llanta'
+    const cod = sku.codigo.toUpperCase()
+    if (cod.includes('BAT')) return 'bateria'
+    if (cod.includes('CASCO')) return 'casco'
+    return 'llanta'
+  }
+
+  async function confirmarRechazoConMotivo() {
+    const { mov, motivo, skuCorrecto } = motivoRechazo
+
+    // 1. Rechazar el movimiento original
+    await supabase.from('movimientos').update({
+      estado_aprobacion: 'rechazado',
+      aprobado_por:      perfil?.id,
+      fecha_aprobacion:  new Date().toISOString(),
+    }).eq('id', mov.id)
+
+    if (motivo === 'incorrecto' && skuCorrecto) {
+      const skuObj   = skus.find(s => s.id === skuCorrecto)
+      const costoSku = costoMap[`${mov.taller_id}_${skuCorrecto}`] ?? 0
+
+      // 2. Crear nueva salida con el SKU correcto (pendiente)
+      await supabase.from('movimientos').insert({
+        taller_id:         mov.taller_id,
+        sku_id:            skuCorrecto,
+        tipo:              'salida',
+        cantidad:          mov.cantidad,
+        fecha:             mov.fecha,
+        fuente:            'manual',
+        estado_aprobacion: 'aprobado',
+        usuario_id:        perfil?.id,
+        appointment_id:    mov.appointment_id,
+        placa:             mov.placa,
+        notas:             `Salida corregida — SKU incorrecto detectado al rechazar mov. del sistema · Appt: ${mov.appointment_id ?? '—'}`,
+      })
+
+      // 3. Generar ajuste al taller por el costo de las piezas incorrectas
+      const montoAjuste = costoSku * mov.cantidad
+      if (montoAjuste > 0) {
+        await supabase.from('ajustes_taller').insert({
+          taller_id:     mov.taller_id,
+          concepto:      `Pieza incorrecta — ${skuObj?.codigo ?? '—'} × ${mov.cantidad} pza(s) · Appt. ${mov.appointment_id ?? '—'} · Placa ${mov.placa ?? '—'}`,
+          monto_sin_iva: montoAjuste,
+          causal:        'salida_shop',
+          movimiento_id: mov.id,
+          fecha_generado: mov.fecha,
+          notas:         'Ajuste automático por rechazo de pieza incorrecta',
+        })
+      }
+    }
+
+    setMotivoRechazo(null)
+    setConfirmApr(null)
+    load()
   }
 
   async function handleAprobacion(mov, accion) {
@@ -530,7 +590,13 @@ export default function Kardex() {
                                 style={{ fontSize:10, padding:'2px 7px', border:'none', borderRadius:5, cursor:'pointer', background:'#DCFCE7', color:'#166534', fontWeight:500 }}>
                                 Aprobar
                               </button>
-                              <button onClick={() => setConfirmApr({ mov:m, accion:'rechazado' })}
+                              <button onClick={() => {
+                                if (m.fuente === 'sistema') {
+                                  setMotivoRechazo({ mov:m, motivo:'', skuCorrecto:'' })
+                                } else {
+                                  setConfirmApr({ mov:m, accion:'rechazado' })
+                                }
+                              }}
                                 style={{ fontSize:10, padding:'2px 7px', border:'none', borderRadius:5, cursor:'pointer', background:'#FEE2E2', color:'#991B1B', fontWeight:500 }}>
                                 Rechazar
                               </button>
@@ -826,6 +892,84 @@ export default function Kardex() {
       )}
 
       {/* ── Modal guardado silencioso de marca (no necesita modal, se hace inline) ── */}
+
+      {/* ── Modal motivo de rechazo (salidas del sistema) ── */}
+      {motivoRechazo && canWrite && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:150, padding:20 }}>
+          <div style={{ background:'white', borderRadius:12, padding:24, width:'100%', maxWidth:480 }}>
+            <p style={{ fontWeight:500, marginBottom:4 }}>❌ Rechazar movimiento del sistema</p>
+            <p style={{ fontSize:11, color:'#888', marginBottom:16 }}>
+              {motivoRechazo.mov.skus?.codigo} · {motivoRechazo.mov.talleres?.nombre} · {motivoRechazo.mov.cantidad} pza(s) · Appt: {motivoRechazo.mov.appointment_id ?? '—'}
+            </p>
+
+            {/* Paso 1: Seleccionar motivo */}
+            <p style={{ fontSize:12, fontWeight:500, marginBottom:8 }}>¿Por qué se rechaza?</p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
+              {[
+                { k:'no_salio',   l:'La pieza no salió del inventario', desc:'No se usó ninguna pieza',             bg:'#EEF4FF', color:'#1E40AF', border:'#BFDBFE' },
+                { k:'incorrecto', l:'El taller puso la pieza incorrecta', desc:'Se usó otro SKU por error',          bg:'#FEF9C3', color:'#854D0E', border:'#FCD34D' },
+              ].map(opt => (
+                <button key={opt.k} onClick={() => setMotivoRechazo(m => ({ ...m, motivo:opt.k, skuCorrecto:'' }))}
+                  style={{ padding:'10px 12px', borderRadius:8, fontSize:11, cursor:'pointer', textAlign:'left',
+                    border:`1.5px solid ${motivoRechazo.motivo===opt.k ? opt.border : '#e0dfd8'}`,
+                    background:motivoRechazo.motivo===opt.k ? opt.bg : 'white',
+                    color:motivoRechazo.motivo===opt.k ? opt.color : '#444' }}>
+                  <div style={{ fontWeight:500, marginBottom:2 }}>{opt.l}</div>
+                  <div style={{ fontSize:10, opacity:0.8 }}>{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            {/* Paso 2: Si es incorrecto, seleccionar SKU correcto */}
+            {motivoRechazo.motivo === 'incorrecto' && (
+              <div style={{ marginBottom:16 }}>
+                <p style={{ fontSize:12, fontWeight:500, marginBottom:6 }}>¿Cuál SKU puso realmente el taller?</p>
+                <select value={motivoRechazo.skuCorrecto}
+                  onChange={e => setMotivoRechazo(m => ({ ...m, skuCorrecto:e.target.value }))}
+                  style={{ padding:'7px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, width:'100%', marginBottom:10 }}>
+                  <option value="">Seleccionar SKU...</option>
+                  {skus.filter(s => {
+                    const tipo = tipoDeSkuMov(motivoRechazo.mov)
+                    const cod  = s.codigo.toUpperCase()
+                    if (tipo === 'bateria') return cod.includes('BAT')
+                    if (tipo === 'casco')   return cod.includes('CASCO')
+                    return !cod.includes('BAT') && !cod.includes('CASCO')
+                  }).map(s => <option key={s.id} value={s.id}>{s.codigo}</option>)}
+                </select>
+                {motivoRechazo.skuCorrecto && (()=>{
+                  const costo = costoMap[`${motivoRechazo.mov.taller_id}_${motivoRechazo.skuCorrecto}`] ?? 0
+                  const total = costo * motivoRechazo.mov.cantidad
+                  return (
+                    <div style={{ background:'#FEF9C3', borderRadius:7, padding:'8px 10px', fontSize:11, color:'#854D0E' }}>
+                      <p>Al confirmar se ejecutará automáticamente:</p>
+                      <ul style={{ margin:'6px 0 0', paddingLeft:16, lineHeight:1.8 }}>
+                        <li>Rechazo del movimiento original</li>
+                        <li>Nueva salida aprobada con el SKU correcto</li>
+                        <li>Ajuste al taller: <strong>${total.toLocaleString('es-MX', {minimumFractionDigits:2})} s/IVA</strong> ({motivoRechazo.mov.cantidad} pza × ${costo.toLocaleString('es-MX', {minimumFractionDigits:2})})</li>
+                      </ul>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+
+            {/* Acciones */}
+            <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+              <button onClick={() => setMotivoRechazo(null)}
+                style={{ padding:'5px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white' }}>
+                Cancelar
+              </button>
+              <button
+                disabled={!motivoRechazo.motivo || (motivoRechazo.motivo === 'incorrecto' && !motivoRechazo.skuCorrecto)}
+                onClick={confirmarRechazoConMotivo}
+                style={{ background:'#DC2626', color:'white', border:'none', borderRadius:7, padding:'5px 14px', fontSize:12, cursor:'pointer', fontWeight:500,
+                  opacity: (!motivoRechazo.motivo || (motivoRechazo.motivo==='incorrecto' && !motivoRechazo.skuCorrecto)) ? 0.5 : 1 }}>
+                Confirmar rechazo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal aprobar/rechazar sistema ── */}
       {confirmApr && canWrite && (

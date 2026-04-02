@@ -22,8 +22,9 @@ export default function Conteos() {
   const [saving,      setSaving]      = useState(false)
   const [expandido,   setExpandido]   = useState(null)
   const [confirmElim, setConfirmElim] = useState(null)
+  const [editLink,     setEditLink]     = useState(null) // {id, url}
 
-  const initForm = { taller_id:'', notas:'', foto:null }
+  const initForm = { taller_id:'', notas:'', link_evidencia:'' }
   const [form,      setForm]      = useState(initForm)
   const [skuCounts, setSkuCounts] = useState([])
 
@@ -69,6 +70,12 @@ export default function Conteos() {
     ))
   }
 
+  async function guardarLink(id, url) {
+    const { error } = await supabase.from('conteos').update({ foto_url: url || null }).eq('id', id)
+    if (error) alert('Error: ' + error.message)
+    setEditLink(null); load()
+  }
+
   async function eliminarConteo(id) {
     const { error } = await supabase.from('conteos').delete().eq('id', id)
     if (error) alert('Error al eliminar: ' + error.message)
@@ -79,17 +86,8 @@ export default function Conteos() {
     if (!form.taller_id) { alert('Selecciona el taller'); return }
     setSaving(true)
 
-    // Subir foto
-    let foto_url = null
-    if (form.foto) {
-      const ext  = form.foto.name.split('.').pop()
-      const path = `conteos/${form.taller_id}/${Date.now()}.${ext}`
-      const { error:upErr } = await supabase.storage.from('inventario').upload(path, form.foto)
-      if (!upErr) {
-        const { data:urlData } = supabase.storage.from('inventario').getPublicUrl(path)
-        foto_url = urlData?.publicUrl
-      }
-    }
+    // Link de evidencia en Google Drive
+    const foto_url = form.link_evidencia.trim() || null
 
     // Crear el conteo
     const { data:conteo, error:conteoErr } = await supabase.from('conteos').insert({
@@ -254,23 +252,22 @@ export default function Conteos() {
                     )}
                   </td>
                   <td style={td}>
-                    {c.foto_url ? (()=>{
-                      const nombre = c.foto_url.split('/').pop().split('?')[0]
-                      const esImagen = /\.(jpg|jpeg|png|gif|webp)$/i.test(nombre)
-                      return (
-                        <a href={c.foto_url} target="_blank" rel="noreferrer" download
-                          style={{display:'flex', flexDirection:'column', alignItems:'center', gap:3, textDecoration:'none'}}>
-                          {esImagen
-                            ? <img src={c.foto_url} alt="Evidencia"
-                                style={{width:44, height:44, objectFit:'cover', borderRadius:6, border:'0.5px solid #e0dfd8'}}/>
-                            : <span style={{fontSize:20}}>📎</span>
-                          }
-                          <span style={{fontSize:9, color:'#1a4f8a', textAlign:'center', maxWidth:60, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                            {esImagen ? 'Ver ↗' : 'Descargar ↗'}
-                          </span>
-                        </a>
-                      )
-                    })() : <span style={{color:'#ccc'}}>—</span>}
+                    <div style={{display:'flex', flexDirection:'column', gap:4}}>
+                      {c.foto_url
+                        ? <a href={c.foto_url} target="_blank" rel="noreferrer"
+                            style={{display:'flex', alignItems:'center', gap:4, fontSize:11,
+                              color:'#1a4f8a', textDecoration:'none', fontWeight:500}}>
+                            <span style={{fontSize:16}}>📁</span> Ver Drive ↗
+                          </a>
+                        : <span style={{color:'#ccc', fontSize:11}}>Sin link</span>}
+                      {canWrite && (
+                        <button onClick={()=>setEditLink({id:c.id, url:c.foto_url||''})}
+                          style={{fontSize:9, padding:'1px 7px', border:'0.5px solid #ccc', borderRadius:5,
+                            cursor:'pointer', background:'white', color:'#888', width:'fit-content'}}>
+                          {c.foto_url ? 'Editar link' : '+ Agregar link'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td style={{...td, color:'#888', maxWidth:200, fontSize:11}}>{c.notas||<span style={{color:'#ccc'}}>—</span>}</td>
                   {canWrite && (
@@ -287,6 +284,33 @@ export default function Conteos() {
           </tbody>
         </table>
       </div>
+
+      {/* Modal editar link de Drive */}
+      {editLink && canWrite && (
+        <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, padding:20}}>
+          <div style={{background:'white', borderRadius:12, padding:22, width:'100%', maxWidth:500}}>
+            <p style={{fontWeight:500, marginBottom:12}}>📁 Link de evidencia en Google Drive</p>
+            <div style={{background:'#EEF4FF', borderRadius:8, padding:'8px 12px', marginBottom:12, fontSize:11, color:'#1E40AF'}}>
+              Abre <a href="https://drive.google.com/drive/folders/1GQmiajHMxb-w5orQt9q03PlSQP1HxmEj" target="_blank" rel="noreferrer" style={{fontWeight:500}}>Evidencias Conteos de Inventario ↗</a>, busca o crea la carpeta del conteo, y pega aquí el link.
+            </div>
+            <input type="url"
+              style={{padding:'8px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, width:'100%', marginBottom:14}}
+              value={editLink.url}
+              onChange={e=>setEditLink(l=>({...l, url:e.target.value}))}
+              placeholder="https://drive.google.com/drive/folders/..."/>
+            <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditLink(null)}
+                style={{padding:'5px 13px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, cursor:'pointer', background:'white'}}>
+                Cancelar
+              </button>
+              <button onClick={()=>guardarLink(editLink.id, editLink.url)}
+                style={{padding:'5px 14px', background:'#1a4f8a', color:'white', border:'none', borderRadius:7, fontSize:12, cursor:'pointer', fontWeight:500}}>
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal confirmar eliminación */}
       {confirmElim && canWrite && (
@@ -405,15 +429,39 @@ export default function Conteos() {
 
             <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14}}>
               <div>
-                <label style={lbl}>Evidencia / Archivo adjunto <span style={{color:'#aaa'}}>(opcional — imagen, ZIP, PDF)</span></label>
-                <input type="file" accept="image/*,.zip,.pdf,.rar"
-                  onChange={e=>setForm(f=>({...f, foto:e.target.files[0]||null}))}
-                  style={{...inp, padding:'4px'}}/>
-                {form.foto && (
-                  <p style={{fontSize:10, color:'#888', marginTop:3}}>
-                    📎 {form.foto.name} ({(form.foto.size/1024).toFixed(0)} KB)
-                  </p>
-                )}
+                <label style={lbl}>
+                Link de evidencia en Google Drive
+                <span style={{color:'#aaa', fontSize:10, marginLeft:4}}>(opcional)</span>
+              </label>
+              {/* Instructivo */}
+              {form.taller_id && (()=>{
+                const taller = talleres.find(t=>t.id===form.taller_id)
+                const hoy = new Date().toISOString().split('T')[0]
+                const nombreSugerido = `Conteo ${taller?.nombre ?? ''} ${hoy}`
+                return (
+                  <div style={{background:'#EEF4FF', border:'1px solid #BFDBFE', borderRadius:8, padding:'10px 12px', marginBottom:8, fontSize:11, color:'#1E40AF'}}>
+                    <p style={{fontWeight:500, marginBottom:6}}>📁 Cómo crear la carpeta:</p>
+                    <ol style={{margin:0, paddingLeft:16, lineHeight:1.8}}>
+                      <li>Abre la carpeta <a href="https://drive.google.com/drive/folders/1GQmiajHMxb-w5orQt9q03PlSQP1HxmEj" target="_blank" rel="noreferrer" style={{color:'#1a4f8a', fontWeight:500}}>Evidencias Conteos de Inventario ↗</a></li>
+                      <li>Crea una carpeta nueva con el nombre:</li>
+                    </ol>
+                    <div style={{display:'flex', alignItems:'center', gap:8, marginTop:6, marginLeft:16}}>
+                      <code style={{background:'#DBEAFE', padding:'3px 10px', borderRadius:5, fontSize:11, fontWeight:500, color:'#1E3A8A', userSelect:'all'}}>
+                        {nombreSugerido}
+                      </code>
+                      <button type="button" onClick={()=>navigator.clipboard.writeText(nombreSugerido)}
+                        style={{fontSize:10, padding:'2px 8px', border:'0.5px solid #93C5FD', borderRadius:5, cursor:'pointer', background:'white', color:'#1E40AF'}}>
+                        Copiar
+                      </button>
+                    </div>
+                    <p style={{marginTop:6, marginLeft:16}}>3. Sube las fotos/archivos, copia el link de la carpeta y pégalo abajo.</p>
+                  </div>
+                )
+              })()}
+              <input type="url" style={inp}
+                value={form.link_evidencia}
+                onChange={e=>setForm(f=>({...f, link_evidencia:e.target.value}))}
+                placeholder="https://drive.google.com/drive/folders/..."/>
               </div>
               <div>
                 <label style={lbl}>Notas <span style={{color:'#aaa'}}>(opcional)</span></label>

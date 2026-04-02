@@ -35,7 +35,13 @@ export default function ValorInventario() {
     setLoading(false)
   }
 
-  function esBateria(sku) { return sku.codigo.toUpperCase().includes('BAT') }
+  function tipoSku(sku) {
+    const cod = sku.codigo.toUpperCase()
+    if (cod.includes('CASCO')) return 'casco'
+    if (cod.includes('BAT'))   return 'bateria'
+    return 'llanta'
+  }
+  function esBateria(sku) { return tipoSku(sku) === 'bateria' }
 
   const filas = inv.map(r => {
     const taller = talleres.find(t => t.id === r.taller_id)
@@ -43,7 +49,7 @@ export default function ValorInventario() {
     if (!taller || !sku) return null
     const costo = Number(r.costo_promedio) || 0
     const valor = r.cantidad * costo
-    const tipo  = esBateria(sku) ? 'bateria' : 'llanta'
+    const tipo  = tipoSku(sku)
     return { ...r, taller, sku, costo, valor, tipo }
   }).filter(Boolean)
 
@@ -57,6 +63,7 @@ export default function ValorInventario() {
   const totalGlobal   = filasFilt.reduce((s, r) => s + r.valor, 0)
   const totalLlantas  = filasFilt.filter(r => r.tipo==='llanta').reduce((s,r) => s+r.valor, 0)
   const totalBaterias = filasFilt.filter(r => r.tipo==='bateria').reduce((s,r) => s+r.valor, 0)
+  const totalCascos   = filasFilt.filter(r => r.tipo==='casco').reduce((s,r) => s+r.valor, 0)
   const totalUnidades = filasFilt.reduce((s, r) => s + r.cantidad, 0)
 
   // Valor por ciudad
@@ -163,9 +170,8 @@ export default function ValorInventario() {
       if (fRegion && taller.region !== fRegion) return false
       if (fTaller && m.taller_id !== fTaller)   return false
       if (fTipo) {
-        const esBat = esBateria(sku)
-        if (fTipo === 'bateria' && !esBat) return false
-        if (fTipo === 'llanta'  &&  esBat) return false
+        const tipo = tipoSku(sku)
+        if (tipo !== fTipo) return false
       }
       return true
     }
@@ -231,7 +237,7 @@ export default function ValorInventario() {
           { label:'Valor total',    value:fmt(totalGlobal),   color:'#1a4f8a' },
           { label:'Llantas',        value:fmt(totalLlantas),  color:'#166534' },
           { label:'Baterías',       value:fmt(totalBaterias), color:'#854D0E' },
-          { label:'Unidades',       value:totalUnidades.toLocaleString('es-MX'), color:'#5F5E5A' },
+          { label:'Cascos',         value:fmt(totalCascos),   color:'#0C447C' },
         ].map(c => (
           <div key={c.label} style={{ background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, padding:'14px 16px' }}>
             <p style={{ fontSize:11, color:'#888', marginBottom:6 }}>{c.label}</p>
@@ -258,6 +264,7 @@ export default function ValorInventario() {
             <option value="">Todos</option>
             <option value="llanta">🔵 Llantas</option>
             <option value="bateria">🟡 Baterías</option>
+            <option value="casco">🔘 Cascos</option>
           </select>
         </div>
         <div>
@@ -398,7 +405,7 @@ export default function ValorInventario() {
 
       {/* Resumen por SKU */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:20 }}>
-        {['llanta','bateria'].map(tipo => {
+        {['llanta','bateria','casco'].map(tipo => {
           const skusDelTipo = Object.entries(porSku).filter(([,d])=>d.tipo===tipo).sort((a,b)=>b[1].valor-a[1].valor)
           if (!skusDelTipo.length) return null
           const totalTipo = skusDelTipo.reduce((s,[,d])=>s+d.valor,0)
@@ -406,10 +413,10 @@ export default function ValorInventario() {
             <div key={tipo} style={{ background:'white', border:'0.5px solid #e0dfd8', borderRadius:10, overflow:'hidden' }}>
               <div style={{ padding:'10px 14px', background:tipo==='llanta'?'#DCFCE7':'#FEF9C3',
                 borderBottom:'0.5px solid #e0dfd8', display:'flex', justifyContent:'space-between' }}>
-                <span style={{ fontWeight:500, fontSize:12, color:tipo==='llanta'?'#166534':'#854D0E' }}>
-                  {tipo==='llanta'?'🔵 Llantas':'🟡 Baterías'}
+                <span style={{ fontWeight:500, fontSize:12, color:tipo==='llanta'?'#166534':tipo==='bateria'?'#854D0E':'#0C447C' }}>
+                  {tipo==='llanta'?'🔵 Llantas':tipo==='bateria'?'🟡 Baterías':'🔘 Cascos'}
                 </span>
-                <span style={{ fontWeight:500, fontSize:12, color:tipo==='llanta'?'#166534':'#854D0E' }}>{fmt(totalTipo)}</span>
+                <span style={{ fontWeight:500, fontSize:12, color:tipo==='llanta'?'#166534':tipo==='bateria'?'#854D0E':'#0C447C' }}>{fmt(totalTipo)}</span>
               </div>
               <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
                 <thead><tr>

@@ -290,9 +290,31 @@ export default function Conteos() {
         <div style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, padding:20}}>
           <div style={{background:'white', borderRadius:12, padding:22, width:'100%', maxWidth:500}}>
             <p style={{fontWeight:500, marginBottom:12}}>📁 Link de evidencia en Google Drive</p>
-            <div style={{background:'#EEF4FF', borderRadius:8, padding:'8px 12px', marginBottom:12, fontSize:11, color:'#1E40AF'}}>
-              Abre <a href="https://drive.google.com/drive/folders/1GQmiajHMxb-w5orQt9q03PlSQP1HxmEj" target="_blank" rel="noreferrer" style={{fontWeight:500}}>Evidencias Conteos de Inventario ↗</a>, busca o crea la carpeta del conteo, y pega aquí el link.
-            </div>
+            {(()=>{
+              const conteoActual = conteos.find(x => x.id === editLink.id)
+              const tallerNom = conteoActual?.talleres?.nombre ?? ''
+              const fechaConteo = conteoActual?.fecha ?? ''
+              const numConteo = conteoActual?.numero_conteo ?? ''
+              const nombreSug = `Conteo #${numConteo} ${tallerNom} ${fechaConteo}`
+              return (
+                <div style={{background:'#EEF4FF', borderRadius:8, padding:'10px 12px', marginBottom:12, fontSize:11, color:'#1E40AF'}}>
+                  <p style={{marginBottom:6}}>
+                    1. Abre <a href="https://drive.google.com/drive/folders/1GQmiajHMxb-w5orQt9q03PlSQP1HxmEj" target="_blank" rel="noreferrer" style={{fontWeight:500}}>Evidencias Conteos de Inventario ↗</a>
+                  </p>
+                  <p style={{marginBottom:6}}>2. Crea una carpeta con el nombre:</p>
+                  <div style={{display:'flex', alignItems:'center', gap:8, marginLeft:8}}>
+                    <code style={{background:'#DBEAFE', padding:'3px 10px', borderRadius:5, fontSize:11, fontWeight:500, color:'#1E3A8A', userSelect:'all'}}>
+                      {nombreSug}
+                    </code>
+                    <button type="button" onClick={()=>navigator.clipboard.writeText(nombreSug)}
+                      style={{fontSize:10, padding:'2px 8px', border:'0.5px solid #93C5FD', borderRadius:5, cursor:'pointer', background:'white', color:'#1E40AF'}}>
+                      Copiar
+                    </button>
+                  </div>
+                  <p style={{marginTop:6}}>3. Sube los archivos, copia el link y pégalo abajo.</p>
+                </div>
+              )
+            })()}
             <input type="url"
               style={{padding:'8px 10px', border:'0.5px solid #ccc', borderRadius:7, fontSize:12, width:'100%', marginBottom:14}}
               value={editLink.url}
@@ -436,8 +458,11 @@ export default function Conteos() {
               {/* Instructivo */}
               {form.taller_id && (()=>{
                 const taller = talleres.find(t=>t.id===form.taller_id)
-                const hoy = new Date().toISOString().split('T')[0]
-                const nombreSugerido = `Conteo ${taller?.nombre ?? ''} ${hoy}`
+                const ahora = new Date()
+                const hoy = `${ahora.getFullYear()}-${String(ahora.getMonth()+1).padStart(2,'0')}-${String(ahora.getDate()).padStart(2,'0')}`
+                // Buscar el próximo número de conteo (conteos existentes + 1)
+                const nextNum = conteos.length + 1
+                const nombreSugerido = `Conteo #${nextNum} ${taller?.nombre ?? ''} ${hoy}`
                 return (
                   <div style={{background:'#EEF4FF', border:'1px solid #BFDBFE', borderRadius:8, padding:'10px 12px', marginBottom:8, fontSize:11, color:'#1E40AF'}}>
                     <p style={{fontWeight:500, marginBottom:6}}>📁 Cómo crear la carpeta:</p>

@@ -126,6 +126,91 @@ export default function ValorInventario() {
 
   const hayFiltroFecha = fFechaIni || fFechaFin
 
+  // ── Inventario inicial y final del período ──────────────────
+  // Usamos los movimientos YA cargados (todos) para calcular sin queries adicionales.
+  //
+  // inv_final  = inv_actual - neto(movimientos POSTERIORES a fecha_fin)
+  // inv_inicial = inv_final - neto(movimientos DEL PERÍODO)
+  //
+  // neto = valor_entradas - valor_salidas (en pesos s/IVA)
+
+  const invInicialPeriodo = {}
+  const invFinalPeriodo   = {}
+
+  if (hayFiltroFecha) {
+    // Helper: calcular valor de un movimiento
+    const valorMov = (m) => {
+      const costo = m.precio_unitario
+        ? Number(m.precio_unitario)
+        : costoActualMap[`${m.taller_id}_${m.sku_id}`] || 0
+      return costo * m.cantidad
+    }
+    // Helper: contribución neta de un movimiento al inventario (+entrada, -salida)
+    const netoMov = (m) => {
+      if (m.tipo === 'entrada') return valorMov(m)
+      if (m.tipo === 'salida')  return -valorMov(m)
+      if (m.tipo === 'ajuste')
+        return m.ajuste_tipo === 'incremento' ? valorMov(m) : -valorMov(m)
+      return 0
+    }
+    // Aplicar filtros de taller/region/tipo
+    const matchFiltros = (m) => {
+      const taller = talleres.find(t => t.id === m.taller_id)
+      const sku    = skus.find(s => s.id === m.sku_id)
+      if (!taller || !sku) return false
+      if (m.origen === 'movimiento') return false
+      if (m.es_garantia) return false
+      if (fRegion && taller.region !== fRegion) return false
+      if (fTaller && m.taller_id !== fTaller)   return false
+      if (fTipo) {
+        const esBat = esBateria(sku)
+        if (fTipo === 'bateria' && !esBat) return false
+        if (fTipo === 'llanta'  &&  esBat) return false
+      }
+      return true
+    }
+
+    // Movimientos posteriores a fecha_fin (para revertir al inventario final del período)
+    const movsPosteriores = fFechaFin
+      ? movs.filter(m => m.fecha > fFechaFin && matchFiltros(m))
+      : []
+
+    // Construir inventario final y inicial por taller
+    // Primero reunir todos los taller_id relevantes (del período + posteriores)
+    const talleresRelevantes = new Set([
+      ...Object.keys(valorPeriodo),
+      ...movsPosteriores.map(m => m.taller_id)
+    ])
+
+    talleresRelevantes.forEach(tallerId => {
+      const taller = talleres.find(t => t.id === tallerId)
+      if (!taller) return
+
+      // Valor actual del inventario de este taller (con filtros)
+      const invActualTaller = filasFilt
+        .filter(r => r.taller_id === tallerId)
+        .reduce((s, r) => s + r.valor, 0)
+
+      // Revertir movimientos posteriores a fecha_fin
+      const netoPost = movsPosteriores
+        .filter(m => m.taller_id === tallerId)
+        .reduce((s, m) => s + netoMov(m), 0)
+
+      // Inventario al final del período = actual - lo que entró/salió después del período
+      const valFinal = Math.max(0, invActualTaller - netoPost)
+
+      // Neto del período para este taller
+      const dp = valorPeriodo[tallerId]
+      const netoPeriodo = dp ? (dp.entradas - dp.salidas) : 0
+
+      // Inventario al inicio del período = final - neto del período
+      const valInicial = Math.max(0, valFinal - netoPeriodo)
+
+      invFinalPeriodo[tallerId]   = { nombre:taller.nombre, region:taller.region, valor:valFinal }
+      invInicialPeriodo[tallerId] = { nombre:taller.nombre, region:taller.region, valor:valInicial }
+    })
+  }
+
   if (loading) return <div style={{ padding:20, color:'#aaa' }}>Cargando inventario valorizado...</div>
 
   return (
@@ -277,26 +362,32 @@ export default function ValorInventario() {
             <thead><tr>
               <th style={th}>Taller</th>
               <th style={th}>Ciudad</th>
+              <th style={{ ...th, textAlign:'right', color:'#5F5E5A' }}>Inv. inicial</th>
               <th style={{ ...th, textAlign:'right', color:'#166534' }}>Entradas (+)</th>
               <th style={{ ...th, textAlign:'right', color:'#A32D2D' }}>Salidas (−)</th>
-              <th style={{ ...th, textAlign:'right' }}>Neto del período</th>
+              <th style={{ ...th, textAlign:'right' }}>Neto período</th>
+              <th style={{ ...th, textAlign:'right', color:'#1a4f8a' }}>Inv. final</th>
             </tr></thead>
             <tbody>
               {Object.keys(valorPeriodo).length === 0 && (
-                <tr><td colSpan={5} style={{ padding:20, textAlign:'center', color:'#aaa' }}>Sin movimientos en el período seleccionado</td></tr>
+                <tr><td colSpan={7} style={{ padding:20, textAlign:'center', color:'#aaa' }}>Sin movimientos en el período seleccionado</td></tr>
               )}
               {Object.entries(valorPeriodo).sort((a,b)=>(b[1].entradas+b[1].salidas)-(a[1].entradas+a[1].salidas)).map(([id,d],idx)=>{
-                const rc   = REGIONES[d.region] ?? {}
-                const neto = d.entradas - d.salidas
+                const rc      = REGIONES[d.region] ?? {}
+                const neto    = d.entradas - d.salidas
+                const invIni  = invInicialPeriodo[id]?.valor ?? 0
+                const invFin  = invFinalPeriodo[id]?.valor ?? 0
                 return (
                   <tr key={id} style={{ background:idx%2===0?'white':'#fafafa' }}>
                     <td style={{ ...td, fontWeight:500 }}>{d.nombre}</td>
                     <td style={{ ...td, fontSize:10, fontWeight:500, color:rc.color }}>{rc.label}</td>
+                    <td style={{ ...td, textAlign:'right', color:'#5F5E5A' }}>{fmt(invIni)}</td>
                     <td style={{ ...td, textAlign:'right', color:'#166534', fontWeight:500 }}>+{fmt(d.entradas)}</td>
                     <td style={{ ...td, textAlign:'right', color:'#A32D2D', fontWeight:500 }}>−{fmt(d.salidas)}</td>
                     <td style={{ ...td, textAlign:'right', fontWeight:500, color:neto>=0?'#166534':'#A32D2D' }}>
                       {neto>=0?'+':''}{fmt(neto)}
                     </td>
+                    <td style={{ ...td, textAlign:'right', fontWeight:500, color:'#1a4f8a' }}>{fmt(invFin)}</td>
                   </tr>
                 )
               })}

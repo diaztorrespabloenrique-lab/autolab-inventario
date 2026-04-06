@@ -588,7 +588,19 @@ function TabSkus() {
   async function guardar() {
     if (!form.codigo.trim()) { alert('El código es requerido'); return }
     setSaving(true)
-    const payload = { codigo:form.codigo.trim(), tipo_id:form.tipo_id||null, precio:parseFloat(form.precio)||null, activo:form.activo!==false }
+    // Derivar columna 'tipo' desde el nombre del tipo de refacción
+    const tipoObj  = tipos.find(t => t.id === form.tipo_id)
+    const tipoNom  = (tipoObj?.nombre ?? '').toLowerCase()
+    const tipoVal  = tipoNom.includes('bateria') || tipoNom.includes('batería') ? 'bateria'
+                   : tipoNom.includes('casco') ? 'casco'
+                   : 'llanta'
+    const payload = {
+      codigo:   form.codigo.trim(),
+      tipo_id:  form.tipo_id || null,
+      tipo:     tipoVal,
+      precio:   parseFloat(form.precio) || null,
+      activo:   form.activo !== false,
+    }
     let error
     if (editing) {
       const res = await supabase.from('skus').update(payload).eq('id', editing)

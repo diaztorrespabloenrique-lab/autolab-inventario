@@ -266,8 +266,8 @@ export default function Kardex() {
       const skuObj   = skus.find(s => s.id === skuCorrecto)
       const costoSku = costoMap[`${mov.taller_id}_${skuCorrecto}`] ?? 0
 
-      // 2. Crear nueva salida con el SKU correcto (pendiente)
-      await supabase.from('movimientos').insert({
+      // 2. Crear nueva salida con el SKU correcto (aprobada)
+      const { data: nuevaSalida } = await supabase.from('movimientos').insert({
         taller_id:         mov.taller_id,
         sku_id:            skuCorrecto,
         tipo:              'salida',
@@ -279,7 +279,10 @@ export default function Kardex() {
         appointment_id:    mov.appointment_id,
         placa:             mov.placa,
         notas:             `Salida corregida — SKU incorrecto detectado al rechazar mov. del sistema · Appt: ${mov.appointment_id ?? '—'}`,
-      })
+      }).select().single()
+
+      // Generar casco si aplica para el SKU correcto
+      if (nuevaSalida) await generarEntradaCasco(nuevaSalida)
 
       // 3. Generar ajuste al taller por el costo de las piezas incorrectas
       const montoAjuste = costoSku * mov.cantidad
@@ -301,6 +304,47 @@ export default function Kardex() {
     load()
   }
 
+  // Mapeo batería → casco del mismo tipo
+  const BATERIA_A_CASCO = {
+    'BATERIA 35': 'CASCO 35',
+    'BATERIA 42': 'CASCO 42',
+    'BATERIA 47': 'CASCO 47',
+    'BATERIA 99': 'CASCO 99',
+  }
+
+  async function generarEntradaCasco(mov) {
+    // Solo aplica a salidas de batería por uso normal (no garantía, no movimiento entre talleres)
+    if (mov.tipo !== 'salida') return
+    if (mov.es_garantia) return
+    if (mov.origen === 'movimiento') return
+
+    const sku = skus.find(s => s.id === mov.sku_id)
+    if (!sku) return
+
+    const codBat = sku.codigo.toUpperCase().trim()
+    const codCasco = Object.entries(BATERIA_A_CASCO).find(([bat]) =>
+      codBat.includes(bat.replace('BATERIA ', '')) && codBat.includes('BAT')
+    )?.[1]
+
+    if (!codCasco) return
+
+    const skuCasco = skus.find(s => s.codigo.toUpperCase().trim() === codCasco)
+    if (!skuCasco) return
+
+    await supabase.from('movimientos').insert({
+      taller_id:         mov.taller_id,
+      sku_id:            skuCasco.id,
+      tipo:              'entrada',
+      cantidad:          mov.cantidad,
+      fecha:             mov.fecha,
+      fuente:            'manual',
+      estado_aprobacion: 'pendiente',
+      origen:            'recuperacion',
+      notas:             `Casco automático por salida de ${sku.codigo} · ${mov.fuente === 'sistema' ? 'Appt: ' + (mov.appointment_id ?? '—') : ''}`,
+      usuario_id:        perfil?.id,
+    })
+  }
+
   async function handleAprobacion(mov, accion) {
     const { error } = await supabase.from('movimientos').update({
       estado_aprobacion: accion,
@@ -312,6 +356,11 @@ export default function Kardex() {
     // Si se aprueba una salida del sistema con proveedor shop → generar ajuste a taller
     if (accion === 'aprobado' && mov.tipo === 'salida' && mov.fuente === 'sistema') {
       await supabase.rpc('generar_ajuste_desde_salida_shop', { p_mov_id: mov.id })
+    }
+
+    // Si se aprueba una salida de batería → generar entrada automática del casco
+    if (accion === 'aprobado') {
+      await generarEntradaCasco(mov)
     }
 
     setConfirmApr(null); load()
